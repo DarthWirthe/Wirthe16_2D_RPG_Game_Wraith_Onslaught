@@ -1,13 +1,13 @@
 local term =      require "term"
 local event =     require "event"
-local image =     require "image"
-local thread =    require "thread"
+local image =     require "G_image"
+local thread =    require "G_thread"
 local unicode =   require "unicode"
 local computer =  require "computer"
 local keyboard =  require "keyboard"
 local fs =        require "filesystem"
-local ser =		  require "serialization"
-local buffer =    require "doubleBuffering"
+local ser = 	  require "serialization"
+local buffer =    require "G_doubleBuffering"
 local gpu =       require("component").gpu
 local mxw, mxh = gpu.maxResolution()
 local TextVersion = "Версия 1.4b 2.1"
