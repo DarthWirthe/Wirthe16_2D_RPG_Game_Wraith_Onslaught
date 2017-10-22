@@ -5026,7 +5026,7 @@ local ev, p2, p3, p4, p5 = event.pull()
 		 addsmsg1("Необходимо "..#gqd[cDialog[f]["do"]]["qreward"]["item"].." ячеек в инвентаре")
 		 tenb = false
 		 end
-		 if not gqd[cDialog[f]["do"]]["qreward"]["item"] then tenb = true end
+		 if gqd[cDialog[f]["do"]]["qreward"]["item"] == nil then tenb = true; gfunc.GetQuestReward(cDialog[f]["do"]) end
 		end
 		if tenb and not gqd[cDialog[f]["do"]]["fct"] then
 	     if not gqd[cDialog[f]["do"]]["repeat"] then
