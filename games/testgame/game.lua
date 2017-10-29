@@ -4406,7 +4406,7 @@ local ev, p2, p3, p4, p5 = event.pull()
   CGD[1]["mx"] = CGD[1]["x"]
   paused = true
   cWindowTrd = "dialog"
-  gfunc.dialogsdata, gfunc.gddnum = io.open(dir.."dialogs.data","r"), 1
+  gfunc.dialogsdata, gfunc.gddnum = io.open(dir.."data/dialogs.data","r"), 1
   for dnum in gfunc.dialogsdata:lines() do
    if gfunc.gddnum == CGD[cTarget]["dialog"] then
    cDialog = load("return "..dnum)()
