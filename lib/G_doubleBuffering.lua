@@ -16,23 +16,13 @@ local sizeOfPixelData = 3
 
 --Формула конвертации индекса массива изображения в абсолютные координаты пикселя изображения
 local function convertIndexToCoords(index)
-	--Приводим индекс к корректному виду (1 = 1, 4 = 2, 7 = 3, 10 = 4, 13 = 5, ...)
-	index = (index + sizeOfPixelData - 1) / sizeOfPixelData
-	--Получаем остаток от деления индекса на ширину изображения
-	local ostatok = index % buffer.screen.width
-	--Если остаток равен 0, то х равен ширине изображения, а если нет, то х равен остатку
-	local x = (ostatok == 0) and buffer.screen.width or ostatok
-	--А теперь как два пальца получаем координату по Y
-	local y = math.ceil(index / buffer.screen.width)
-	--Очищаем остаток из оперативки
-	ostatok = nil
-	--Возвращаем координаты
-	return x, y
+	local integer, fractional = math.modf(index / (buffer.screen.width * 3))
+	return math.ceil(fractional * buffer.screen.width), integer + 1
 end
 
 --Формула конвертации абсолютных координат пикселя изображения в индекс для массива изображения
 local function convertCoordsToIndex(x, y)
-	return (buffer.screen.width * (y - 1) + x) * sizeOfPixelData - sizeOfPixelData + 1
+	return (buffer.screen.width * 3) * (y - 1) + x * 3 - 2
 end
 
 local function printDebug(line, text)
