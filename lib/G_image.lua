@@ -80,11 +80,11 @@
 
 -- Адаптивная загрузка необходимых библиотек и компонентов
 
-local component = require "component"
-local unicode = require "unicode"
-local fs = require "filesystem"
-local colorlib = require "G_colorlib"
-local bit32 = require "bit32"
+local component = require ("component")
+local unicode = require ("unicode")
+local fs = require ("filesystem")
+local colorlib = require ("G_colorlib")
+local bit32 = require ("bit32")
 
 
 local image = {}
