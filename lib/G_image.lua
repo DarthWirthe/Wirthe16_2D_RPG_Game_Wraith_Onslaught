@@ -83,7 +83,7 @@
 local component = require "component"
 local unicode = require "unicode"
 local fs = require "filesystem"
-local colorlib require = "G_colorlib"
+local colorlib = require = "G_colorlib"
 local bit32 = require "bit32"
 
 
