@@ -1,12 +1,6 @@
--- Адаптивная загрузка необходимых библиотек и компонентов
-local libraries = {
-	["component"] = "component",
-	["unicode"] = "unicode",
-	["image"] = "G_image",
-	["colorlib"] = "G_colorlib",
-}
-
-for library in pairs(libraries) do if not _G[library] then _G[library] = require(libraries[library]) end end; libraries = nil
+local component = require "component"
+local unicode = require "unicode"
+local colorlib = require "G_colorlib"
 
 local buffer = {}
 local debug = false
