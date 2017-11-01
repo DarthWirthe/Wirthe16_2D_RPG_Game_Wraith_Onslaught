@@ -126,7 +126,7 @@ local function lang(strin)
  end
  
 local aItemIconsSpr
-aItemIconsSpr = readFromFile(dir.."itempic.data")
+aItemIconsSpr = readFromFile(dir.."data/itempic.data")
 
 local vAttackDistance
 
