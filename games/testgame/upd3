@@ -1,10 +1,12 @@
 return {
-"game.lua"
-"data/levels.data"
-"data/dialogs.data"
-"data/elements.data"
-"sprpic/player_a1.pic"
+"G_doubleBuffering.lua",
+"G_image.lua",
+"game.lua",
+"data/levels.data",
+"data/dialogs.data",
+"data/elements.data",
+"sprpic/player_a1.pic",
 },
 {
-"translate.lang"
+"translate.lang",
 }
