@@ -1,0 +1,10 @@
+return {
+"game.lua"
+"data/levels.data"
+"data/dialogs.data"
+"data/elements.data"
+"sprpic/player_a1.pic"
+},
+{
+"translate.lang"
+}
