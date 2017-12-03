@@ -112,18 +112,8 @@ local constants = {
 
 --Формула конвертации индекса массива изображения в абсолютные координаты пикселя изображения
 local function convertIndexToCoords(index, width)
-	--Приводим индекс к корректному виду (1 = 1, 4 = 2, 7 = 3, 10 = 4, 13 = 5, ...)
-	index = (index + constants.elementCount - 1) / constants.elementCount
-	--Получаем остаток от деления индекса на ширину изображения
-	local ostatok = index % width
-	--Если остаток равен 0, то х равен ширине изображения, а если нет, то х равен остатку
-	local x = (ostatok == 0) and width or ostatok
-	--А теперь как два пальца получаем координату по Y
-	local y = math.ceil(index / width)
-	--Очищаем остаток из оперативки
-	ostatok = nil
-	--Возвращаем координаты
-	return x, y
+	local integer, fractional = math.modf((index - 2) / (width * 4))
+	return math.ceil(fractional * width), integer + 1
 end
 
 --Формула конвертации абсолютных координат пикселя изображения в индекс для массива изображения
@@ -920,9 +910,10 @@ end
 
 function image.flipVertical(picture)
 	local newPicture = {}; newPicture.width = picture.width; newPicture.height = picture.height
+	local index
 	for j = picture.height, 1, -1 do
 		for i = 1, picture.width do
-			local index = convertCoordsToIndex(i, j, picture.width)
+			index = convertCoordsToIndex(i, j, picture.width)
 			table.insert(newPicture, picture[index]); table.insert(newPicture, picture[index + 1]); table.insert(newPicture, picture[index + 2]); table.insert(newPicture, picture[index + 3])
 			picture[index], picture[index + 1], picture[index + 2], picture[index + 3] = nil, nil, nil, nil
 		end
@@ -930,12 +921,32 @@ function image.flipVertical(picture)
 	return newPicture
 end
 
+local symbolpairs = {
+	{"◀","▶","▲","▼"}, -- л, п, в, н
+	{"◢","◣"},
+	{"◤","◥"},
+	}
+
 function image.flipHorizontal(picture)
 	local newPicture = {}; newPicture.width = picture.width; newPicture.height = picture.height
+	local rUnicodeSymbol = ""
+	local index
 	for j = 1, picture.height do
 		for i = picture.width, 1, -1 do
-			local index = convertCoordsToIndex(i, j, picture.width)
-			table.insert(newPicture, picture[index]); table.insert(newPicture, picture[index + 1]); table.insert(newPicture, picture[index + 2]); table.insert(newPicture, picture[index + 3])
+			index = convertCoordsToIndex(i, j, picture.width)
+			table.insert(newPicture, picture[index])
+			table.insert(newPicture, picture[index + 1]) 
+			table.insert(newPicture, picture[index + 2])
+			for f = 1, #symbolpairs do
+				if picture[index + 3] == symbolpairs[f][1] then
+				rUnicodeSymbol = symbolpairs[f][2]
+				elseif picture[index + 3] == symbolpairs[f][2] then
+				rUnicodeSymbol = symbolpairs[f][1]
+				else 
+				rUnicodeSymbol = picture[index + 3]
+				end
+			end
+			table.insert(newPicture, rUnicodeSymbol)
 			picture[index], picture[index + 1], picture[index + 2], picture[index + 3] = nil, nil, nil, nil
 		end
 	end
@@ -943,11 +954,12 @@ function image.flipHorizontal(picture)
 end
 
 function image.rotate(picture, angle)
+local index
 	local function rotateBy90(picture)
 		local newPicture = {}; newPicture.width = picture.height; newPicture.height = picture.width
 		for i = 1, picture.width do
 			for j = picture.height, 1, -1 do
-				local index = convertCoordsToIndex(i, j, picture.width)
+				index = convertCoordsToIndex(i, j, picture.width)
 				table.insert(newPicture, picture[index]); table.insert(newPicture, picture[index + 1]); table.insert(newPicture, picture[index + 2]); table.insert(newPicture, picture[index + 3])
 				picture[index], picture[index + 1], picture[index + 2], picture[index + 3] = nil, nil, nil, nil
 			end
@@ -959,7 +971,7 @@ function image.rotate(picture, angle)
 		local newPicture = {}; newPicture.width = picture.width; newPicture.height = picture.height
 		for j = picture.height, 1, -1 do
 				for i = picture.width, 1, -1 do
-				local index = convertCoordsToIndex(i, j, picture.width)
+				index = convertCoordsToIndex(i, j, picture.width)
 				table.insert(newPicture, picture[index]); table.insert(newPicture, picture[index + 1]); table.insert(newPicture, picture[index + 2]); table.insert(newPicture, picture[index + 3])
 				picture[index], picture[index + 1], picture[index + 2], picture[index + 3] = nil, nil, nil, nil
 			end
@@ -971,7 +983,7 @@ function image.rotate(picture, angle)
 		local newPicture = {}; newPicture.width = picture.height; newPicture.height = picture.width
 		for i = picture.width, 1, -1 do
 			for j = 1, picture.height do
-				local index = convertCoordsToIndex(i, j, picture.width)
+				index = convertCoordsToIndex(i, j, picture.width)
 				table.insert(newPicture, picture[index]); table.insert(newPicture, picture[index + 1]); table.insert(newPicture, picture[index + 2]); table.insert(newPicture, picture[index + 3])
 				picture[index], picture[index + 1], picture[index + 2], picture[index + 3] = nil, nil, nil, nil
 			end
