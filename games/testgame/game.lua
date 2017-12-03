@@ -999,19 +999,6 @@ local level = gid[itemID]["lvl"]
 return newItemID
 end
 
--- for f = 1, 20 do addItem(createNewItem(gfunc.random(1,116)),gfunc.random(1,10)) end
--- addItem(90,1)
--- addItem(103,1)
--- addItem(105,1)
--- addItem(107,1)
--- addItem(109,1)
--- addItem(111,1)
--- addItem(88,1)
--- addItem(98,1)
--- addItem(112,1)
-local ym0 = {98,100,101,102,103}
-for f = 1, 20 do addItem(createNewItem(ym0[gfunc.random(1,#ym0)]),1) end
-
 local function addUnitEffect(uID,eID,lvl)
 local addne = true 
  if uID ~= nil and eID ~= nil and lvl ~= nil and eID >= 1 and eID <= #ged then
