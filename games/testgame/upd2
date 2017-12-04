@@ -5,7 +5,6 @@ return {
 "G_thread.lua",
 --main
 "game.lua",
-"translate.lang",
 --.data
 "data/itempic.data",
 "data/dialogs.data",
