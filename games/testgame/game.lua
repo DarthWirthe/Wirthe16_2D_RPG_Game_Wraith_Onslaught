@@ -2527,7 +2527,7 @@ local function dAfterkill(d,x)
   gfunc.addUnit(43,x+10,2)
   imageBuffer[#imageBuffer+1] = image.duplicate(image.load(dir.."sprpic/"..gud[43]["image"]..".pic"))
   CGD[#CGD]["image"] = #imageBuffer
-  elseif type(d[f]) == "table" and d[f][1] == "sp" and gud[d[f][2]]["nres"] == false then -- spawn
+  elseif type(d[f]) == "table" and d[f][1] == "sp" and gud[d[f][2]]["nres"] then -- spawn
   gfunc.spawnSingleUnit(d[f][2],x+gfunc.random(-10,10),1)
   elseif type(d[f]) == "table" and d[f][1] == "cq" then -- cancel the quest
    for i = 1, #d[f] - 1 do
