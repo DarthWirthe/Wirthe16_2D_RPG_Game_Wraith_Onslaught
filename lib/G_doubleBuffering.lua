@@ -11,7 +11,7 @@ local GPUProxy, GPUProxyGetResolution, GPUProxySetResolution, GPUProxyBind, GPUP
 
 local mathCeil, mathFloor, mathModf, mathAbs = math.ceil, math.floor, math.modf, math.abs
 local tableInsert, tableConcat = table.insert, table.concat
-local colorBlend = color.blend
+local colorBlend = color.alphaBlend
 local unicodeLen, unicodeSub = unicode.len, unicode.sub
 
 --------------------------------------------------------------------------------
@@ -300,17 +300,20 @@ local function image(xStart, yStart, picture, blendForeground)
 					imageIndexPlus1, imageIndexPlus2, imageIndexPlus3 = imageIndex + 1, imageIndex + 2, imageIndex + 3				
 					if picture[imageIndexPlus2] == 0 then
 						newFrameBackgrounds[bufferIndex], newFrameForegrounds[bufferIndex] = picture[imageIndex], picture[imageIndexPlus1]
-					elseif picture[imageIndexPlus2] > 0 and picture[imageIndexPlus2] < 1 then
+						newFrameSymbols[bufferIndex] = picture[imageIndexPlus3]
+					elseif picture[imageIndexPlus2] > 0 and picture[imageIndexPlus2] < 255 then
 						newFrameBackgrounds[bufferIndex] = colorBlend(newFrameBackgrounds[bufferIndex], picture[imageIndex], picture[imageIndexPlus2])
 						if blendForeground then
 							newFrameForegrounds[bufferIndex] = colorBlend(newFrameForegrounds[bufferIndex], picture[imageIndexPlus1], picture[imageIndexPlus2])
 						else
 							newFrameForegrounds[bufferIndex] = picture[imageIndexPlus1]
 						end
-					elseif picture[imageIndexPlus2] == 1 and picture[imageIndexPlus3] ~= " " then
+						newFrameSymbols[bufferIndex] = picture[imageIndexPlus3]
+					elseif picture[imageIndexPlus2] == 255 and picture[imageIndexPlus3] ~= " " then
 						newFrameForegrounds[bufferIndex] = picture[imageIndexPlus1]
+						newFrameSymbols[bufferIndex] = picture[imageIndexPlus3]
 					end
-					newFrameSymbols[bufferIndex] = picture[imageIndexPlus3]
+					
 				end
 				bufferIndex, imageIndex = bufferIndex + 1, imageIndex + 4
 			end
