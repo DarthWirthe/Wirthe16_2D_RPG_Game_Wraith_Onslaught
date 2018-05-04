@@ -1,7 +1,8 @@
 return {
+"G_doubleBuffering.lua",
 "game.lua",
 "data/levels.data",
-"data/dialogs.data",
+"data/dialogs.data"
 },
 {
 }
