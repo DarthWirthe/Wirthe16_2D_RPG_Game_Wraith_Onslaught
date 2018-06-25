@@ -1,11 +1,11 @@
 return {
 "itempic/animal_fur.pic",
 "itempic/wood.pic",
-"data/dialogs.data"
+"data/dialogs.data",
 "data/elements.data",
 "data/levels.data",
 "data/manufacturing.data",
-"game.lua",
+"game.lua"
 },
 {
 }
