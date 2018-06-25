@@ -10,7 +10,7 @@ local ser = 	  require "serialization"
 local buffer =    require "G_doubleBuffering"
 local component = require "component"
 local gpu =       component.gpu
-local tableInsert, mathFloor, mathCeil, mathMin, mathMax = table.insert, math.floor, math.ceil, math.min, math.max
+local tableInsert, tableRemove, mathFloor, mathCeil, mathMin, mathMax = table.insert, table.remove, math.floor, math.ceil, math.min, math.max
 local mxw, mxh = gpu.maxResolution()
 
 local pScreenText = "(C) 2016-2018 Wirthe16"
@@ -18,16 +18,19 @@ local cScreenStat = "Загрузка..."
 local preduprejdenie = ""
 local vseNormalno = true
 local dir = "/games/testgame/"
-local debugMode = false
 local logFile = "log.txt"
+local debugMode = false
+local paused = false
+local cWindowTrd = nil
+local showTargetInfo = false
+local stopDrawing = false
+local ingame = true
+local cDialog = nil
 local startBckgColour = 0x222222
 local cp = {white = 0xffffff, blue = 0x3392ff, magenta = 0x996dbf, golden = 0xffff00, orange = 0xffb420, green = 0xff9200}
 local cGlobalx, cBackgroundPos = 1, 1
 local pSprPicPos = 75
 local cTarget = 0
-local paused = false
-local cWindowTrd = nil
-local showTargetInfo = false
 local targetQuest = 0
 local pckTarget = 0
 local pickingUp = false
@@ -35,6 +38,7 @@ local maxPckTime = 0
 local pckTime = 0
 local pmov = 0
 local cItemRange = 200
+local pID = 1
 local bufferenv
 local vAttackDistance
 thread.init()
@@ -46,7 +50,9 @@ local gfunc = {}
 
 gfunc.usepmx = false
 
-gfunc.version = {1,2,7,4}
+gfunc.version = {1,2,7,5}
+
+local gamefps, cfps, usram = 0, 0
 
 local ank, lec, sle = 25, 1, 0.001
 
@@ -91,13 +97,9 @@ vseNormalno = false
 preduprejdenie = preduprejdenie..' оперативной памяти ('..limg..' МБ) недостаточно для нормальной работы программы.'
 end
 
-local usram
-
 function gfunc.RAMInfo()
 return tostring(mathFloor((computer.totalMemory()-computer.freeMemory())/1024)).." KB/"..tostring(mathCeil(computer.totalMemory()/1048576*10)/10).." MB"
 end
-
-local gamefps, cfps = 0, 0
 
 local function readFromFile(path)
 local file = io.open(path, 'r')
@@ -221,6 +223,7 @@ mhp: устанавливает максимальное значение здо
 hpmul: множитель максимального значения здоровья.
 tlp: координаты телепортации (только если rtype = 'c')
 ]]--
+
 for f = 1, #gud do
 if gud[f]["name"] == "" then gud[f]["name"] = "Без названия" end
  if gud[f]["loot"] and not gud[f]["loot"]["exp"] then
@@ -231,8 +234,8 @@ end
 
 -- gid = Различные предметы / массив
 
-gfunc.watds = {["sword"]=10,["spear"]=12,["axe"]=10}
-local weaponHitRate = {["sword"]=0.9,["spear"]=1,["axe"]=1.2}
+gfunc.watds = {[1]=10,[2]=12,[3]=10}
+local weaponHitRate = {[1]=0.9,[2]=1,[3]=1.2}
 local armorPhysicalDefenceMultiple, armorMagicalDefenceMultiple = {
 ["pendant"]=19.5,["ring"]=21.3,["robe"]=30.6, -- общее
 ["helmet"]=38.2,["armor"]=40.4,["pants"]=38.7,["footwear"]=37.3, -- фз
@@ -276,7 +279,10 @@ gqd[f]["qstgve"] = nil
 gqd[f]["comp"] = 0
 end
 
-local cPlayerSkills = {{1,0,1},{2,0,1},{3,0,1},{4,0,1},{5,0,0},{6,0,0},{7,0,0},{8,0,0},{9,0,0}}
+local cPlayerSkills = {
+{1,0,1},{2,0,1},{3,0,1},{4,0,1},{5,0,0},{6,0,0},{7,0,0},{8,0,0},{9,0,0},{10,0,0}
+}
+
 local cUskills = {1,2,3,4,0,0}
 
 local imageBuffer = {} -- буффер для изображений, чтобы не грузить процессор и диск | с версии 1.2.1
@@ -286,31 +292,6 @@ local iconImageBuffer = {} -- буффер для иконок предмето�
 local CGD = {} -- массив со всеми персонажами
 
 local cUquests = {} -- структура -- [1] (и т.д.) = {1(id),0(прогресс),false(не выполнено/выполнено)} 
-
-local inventory = {
-["weared"] = {
-["helmet"] = 0,
-["pendant"] = 0,
-["armor"] = 0,
-["robe"] = 0,
-["pants"] = 0,
-["weapon"] = 7,
-["footwear"] = 0,
-["ring"] = 0},
-["bag"] = {}
-}
-
-for f = 1, 20 do inventory["bag"][f] = {0,0} end
-
-local stopDrawing = false
-local ingame = true
-local cmp, mmp, cxp, mxp, cCoins = 0, 0, 0, 0, 0
-local cDialog
-
-local charPoints = gud[1]["lvl"]-1
-local survivability = 1
-local strength = 1
-local intelligence = 1
 
 local function clicked(x,y,x1,y1,x2,y2)
  if x >= x1 and x <= x2 and y >= y1 and y <= y2 then 
@@ -402,23 +383,13 @@ local x1, y1 = CGD[from]["x"], CGD[from]["y"]
 	return mathFloor(math.sqrt((x1-x)^2+(y1-( y or 1))^2)*10)/10
 end
 
--- function gfunc.getDistanceToId(from,to)
--- local x1, x2 = CGD[from]["x"], CGD[to]["x"]
-	-- if x1 + CGD[from]["width"] < x2 then
-	-- return x2 - (x1+CGD[from]["width"])
-	-- elseif x1 > x2 + CGD[to]["width"] then
-	-- return x1 - (x2+CGD[to]["width"])
-	-- end
--- return 0
--- end
-
 function gfunc.getDistanceToId(from,to)
 local dist = 0
 local x1, x2 = CGD[from]["x"], CGD[to]["x"]
-	if x1 < x2 then 
-	dist = x2-x1-CGD[from]["width"]
-	elseif x1 > x2+CGD[to]["width"] then 
-	dist = x1-x2-CGD[to]["width"]
+	if x1 + CGD[from]["width"] < x2 then 
+	dist = x2 - x1 - CGD[from]["width"]
+	elseif x1 > x2 + CGD[to]["width"] then 
+	dist = x1 - x2 - CGD[to]["width"]
 	end
 return dist
 end
@@ -472,17 +443,21 @@ local function movetoward(id, x, distanceLimit, step)
 end
 
 function gfunc.playerAutoMove(x, distanceLimit, step)
- if gfunc.getDistance(1,x) >= step and gfunc.getDistance(1,x) < distanceLimit and mathFloor(x) < mathFloor(CGD[1]["x"]) then
- CGD[1]["spos"] = "l" 
+local kx
+ if gfunc.getDistance(pID,x) >= step and gfunc.getDistance(pID,x) < distanceLimit and x < CGD[pID]["x"] then
+ CGD[pID]["spos"] = "l" 
  pmov = -step
- elseif gfunc.getDistance(1,x) >= step and gfunc.getDistance(1,x) < distanceLimit and mathFloor(x) > mathFloor(CGD[1]["x"]) then
- CGD[1]["spos"] = "r"
+ elseif gfunc.getDistance(pID,x) >= step and gfunc.getDistance(pID,x) < distanceLimit and x > CGD[pID]["x"] then
+ CGD[pID]["spos"] = "r"
  pmov = step
- else
- CGD[1]["x"] = x
- CGD[1]["image"] = 0
+ elseif gfunc.getDistance(pID,x) < step then
  pmov = 0
  gfunc.usepmx = false
+ CGD[pID]["x"] = x
+ CGD[pID]["mx"] = x
+ cGlobalx = x
+ cBackgroundPos = x
+ CGD[pID]["image"] = 0
  end
 end
 
@@ -521,7 +496,7 @@ local insQuestDialog = true
   var = true
    for q = 1, #cUquests do
     if cUquests[q][1] == cQue[f] and cUquests[q][3] then
-     if CGD[1]["lvl"] < gqd[cQue[f]]["minlvl"] or gqd[cQue[f]]["comp"] or not gqd[cQue[f]]["comp"] then
+     if CGD[pID]["lvl"] < gqd[cQue[f]]["minlvl"] or gqd[cQue[f]]["comp"] or not gqd[cQue[f]]["comp"] then
 	 var = false
      break
 	 end
@@ -531,7 +506,7 @@ local insQuestDialog = true
    newDialog[1]["do"][povar] = {["q"]=cQue[f],["text"]=gqd[cQue[f]]["name"],["action"]="qdialog",
     ["do"] = {
 		["text"]=( gqd[cQue[f]]["gtext"] or "Новое задание" ),
-		{["text"]=( gqd[cQue[f]]["atext"] or "Я готов выполнить задание" ),["action"]="getquest",["do"]=cQue[f]},
+		{["text"]=( gqd[cQue[f]]["atext"] or "Я выполню это задание" ),["action"]="getquest",["do"]=cQue[f]},
 		{["text"]=( gqd[cQue[f]]["rtext"] or "Не сейчас" ),["action"]="close",["do"]=nil}
 		}
     }
@@ -579,11 +554,18 @@ local sMSG4, smsg4time = {"","",""}, 0
 
 function gfunc.textmsg4(msg)
 tableInsert(sMSG4,msg)
-if #sMSG4 > 3 then table.remove(sMSG4,1) end
+if #sMSG4 > 3 then tableRemove(sMSG4,1) end
 smsg4time = 5
 end
 
-local consDataR = {}
+local sMSG5, smsg5time = {}, 0
+
+function gfunc.textmsg5(msg)
+smsg5time = 20
+tableInsert(sMSG5,msg)
+end
+
+local consoleArray = {}
 
 local function booleanToString(b)
  if b then
@@ -610,11 +592,12 @@ local msg, adt = "", ""
   msg = msg..adt.." "
   end
  end
-tableInsert(consDataR,msg)
+tableInsert(consoleArray,msg)
+if #consoleArray > 30 then tableRemove(consoleArray,1) end
 end
 
 function gfunc.console.wError(e)
-if type(e) == "string" then tableInsert(consDataR,"!/"..e) end
+if type(e) == "string" then tableInsert(consoleArray,"!/"..e) end
 end
 
 -- функция чтобы поставить параметры мобов по умолчанию
@@ -723,8 +706,8 @@ gfunc.console.debug("Загрузка ("..unicode.sub(os.date(), 1, -4)..")")
 -- инвентарь полный / не полный
 function gfunc.checkInventoryisFull()
 local full = true
- for f = 1, #inventory["bag"] do
- if inventory["bag"][f][2] == 0 then full = false end
+ for f = 1, #CGD[pID]["inventory"]["bag"] do
+ if CGD[pID]["inventory"]["bag"][f][2] == 0 then full = false end
  end
 return full
 end
@@ -733,8 +716,8 @@ end
 -- место в инвентаре, 0 = полный
 function gfunc.checkInventorySpace()
 local space = 0
- for f = 1, #inventory["bag"] do
- if inventory["bag"][f][1] == 0 then space = space + 1 end
+ for f = 1, #CGD[pID]["inventory"]["bag"] do
+ if CGD[pID]["inventory"]["bag"][f][1] == 0 then space = space + 1 end
  end
 return space
 end
@@ -744,21 +727,21 @@ local lostItem
 local function addItem(itemid,num)
 local vparInvEx = 0
 local r = 0
- for f = 1, #inventory["bag"] do
-  if inventory["bag"][f][2] == 0 then
-  inventory["bag"][f][1] = 0
-  if inventory["bag"][f][1] >= cItemRange then gid[inventory["bag"][f][1]] = nil end
+ for f = 1, #CGD[pID]["inventory"]["bag"] do
+  if CGD[pID]["inventory"]["bag"][f][2] == 0 then
+  CGD[pID]["inventory"]["bag"][f][1] = 0
+  if CGD[pID]["inventory"]["bag"][f][1] >= cItemRange then gid[CGD[pID]["inventory"]["bag"][f][1]] = nil end
   iconImageBuffer[f] = nil
   end
  end
  if not gid[itemid] or not gid[itemid]["stackable"] then
-  for f = 1, #inventory["bag"] do
-   if inventory["bag"][f][1] == 0 then 
+  for f = 1, #CGD[pID]["inventory"]["bag"] do
+   if CGD[pID]["inventory"]["bag"][f][1] == 0 then 
    vparInvEx = 1
-   inventory["bag"][f][1] = itemid
-   inventory["bag"][f][2] = num
+   CGD[pID]["inventory"]["bag"][f][1] = itemid
+   CGD[pID]["inventory"]["bag"][f][2] = num
     if cWindowTrd == "inventory" then
-	iconImageBuffer[f] = image.load(dir.."itempic/"..loadedItemIcons[gid[inventory["bag"][f][1]]["icon"]]..".pic")
+	iconImageBuffer[f] = image.load(dir.."itempic/"..loadedItemIcons[gid[CGD[pID]["inventory"]["bag"][f][1]]["icon"]]..".pic")
     end
    r = f
    break 
@@ -766,22 +749,22 @@ local r = 0
   end
  end
  if gid[itemid] and gid[itemid]["stackable"] and vparInvEx == 0 then
-  for i = 1, #inventory["bag"] do
-   if inventory["bag"][i][1] == itemid then
-   inventory["bag"][i][2] = inventory["bag"][i][2] + num
+  for i = 1, #CGD[pID]["inventory"]["bag"] do
+   if CGD[pID]["inventory"]["bag"][i][1] == itemid then
+   CGD[pID]["inventory"]["bag"][i][2] = CGD[pID]["inventory"]["bag"][i][2] + num
    vparInvEx = 1
    r = i
    break
    end
   end
   if vparInvEx == 0 then
-   for i = 1, #inventory["bag"] do
-    if inventory["bag"][i][1] == 0 or inventory["bag"][i][2] == 0 then
-	inventory["bag"][i][1] = itemid
-	inventory["bag"][i][2] = num
+   for i = 1, #CGD[pID]["inventory"]["bag"] do
+    if CGD[pID]["inventory"]["bag"][i][1] == 0 or CGD[pID]["inventory"]["bag"][i][2] == 0 then
+	CGD[pID]["inventory"]["bag"][i][1] = itemid
+	CGD[pID]["inventory"]["bag"][i][2] = num
 	vparInvEx = 1
     if cWindowTrd == "inventory" then
-	iconImageBuffer[i] = image.load(dir.."itempic/"..loadedItemIcons[gid[inventory["bag"][i][1]]["icon"]]..".pic")
+	iconImageBuffer[i] = image.load(dir.."itempic/"..loadedItemIcons[gid[CGD[pID]["inventory"]["bag"][i][1]]["icon"]]..".pic")
     end	
 	r = i
 	break
@@ -794,9 +777,9 @@ local r = 0
  gfunc.console.debug("Инвентарь переполнен")
  gfunc.textmsg1("Инвентарь переполнен!")
  end
- for f = 1, #inventory["bag"] do
-  if inventory["bag"][f][1] ~= 0 and gid[inventory["bag"][f][1]] and not gid[inventory["bag"][f][1]]["stackable"] and inventory["bag"][f][2] > 1 then
-  inventory["bag"][f][2] = 1
+ for f = 1, #CGD[pID]["inventory"]["bag"] do
+  if CGD[pID]["inventory"]["bag"][f][1] ~= 0 and gid[CGD[pID]["inventory"]["bag"][f][1]] and not gid[CGD[pID]["inventory"]["bag"][f][1]]["stackable"] and CGD[pID]["inventory"]["bag"][f][2] > 1 then
+  CGD[pID]["inventory"]["bag"][f][2] = 1
   end
  end
 return r
@@ -810,11 +793,11 @@ local new = {}
  for f = 1, #massiv do
  tableInsert(new,gfunc.random(1,#massiv),massiv[f])
  end
- for e = 1, #new do if new[#new-e+1] == "§" then table.remove(new,#new-e+1) end end
+ for e = 1, #new do if new[#new-e+1] == "§" then tableRemove(new,#new-e+1) end end
 return new
 end
  
-local function createNewItem(itemID) 
+local function createNewItem(itemID)
 local newItemID, hu = -1, 0
  while true do
  if not gid[cItemRange+hu] then newItemID = cItemRange+hu break end
@@ -834,14 +817,14 @@ local newItemID, hu = -1, 0
 	"icon",
 	"ncolor"
  }
- for e = 1, #list do
- gid[newItemID][list[e]] = gid[itemID][list[e]]
+ for k, _ in pairs(gid[itemID]) do
+ gid[newItemID][k] = gid[itemID][k]
  end
 gid[newItemID]["props"] = {["dds"]={}}
-local level = gid[itemID]["lvl"]
- for k, v in pairs(gid[itemID]["props"]) do
+ for k, _ in pairs(gid[itemID]["props"]) do
  gid[newItemID]["props"][k] = gid[itemID]["props"][k]
  end
+local level = gid[itemID]["lvl"]
  local props = {
 	[1]={"hp+",
 		["min"] = 4+level^2,
@@ -872,7 +855,7 @@ local level = gid[itemID]["lvl"]
 		["max"] = 2+level^1.2*8+(level-3),
 		["weapon"] = 60 + level*2,
 		["armors"] = 0,
-		["sub"] = {"spear","axe","sword"}
+		["sub"] = {1,2,3}
 		},
 	[6]={"mdm+",
 		["min"] = 2+level*6+(level-3),
@@ -930,7 +913,7 @@ local level = gid[itemID]["lvl"]
 		["armors"] = mathMax(level-2,0) -- %
 		},
 	}
- local ddch, adnum, newDds, cccc, dt, value = {100,45,5,0.5,0.05}, 1, {}
+ local ddch, adnum, newDds, cccc, dt, value = {100,45,7.5,1,0.15}, 1, {}
  for f = 1, 5 do
   if gfunc.random(1,10^6)/10^4 <= ddch[6-f] then
   adnum = 6-f
@@ -1017,9 +1000,9 @@ end
 
 local function checkItemInBag(itemid)
 local d = 0
- for f = 1, #inventory["bag"] do
-  if inventory["bag"][f][1] == itemid then 
-  d = d + inventory["bag"][f][2]
+ for f = 1, #CGD[pID]["inventory"]["bag"] do
+  if CGD[pID]["inventory"]["bag"][f][1] == itemid then 
+  d = d + CGD[pID]["inventory"]["bag"][f][2]
   end
  end
 return d, itemid
@@ -1091,65 +1074,82 @@ local v = {
 ["pdm+"]=0,["mdm+"]=0,["vMdm1"]=0,
 ["vPdm2"]=0,["vMdm2"]=0,["pdf+"]=0,
 ["mdf+"]=0,["chc+"]=0,["hp%"]=0,
-["mp%"]=0}
+["mp%"]=0,["pwd%"]=0,["mwd%"]=0}
 
 function gfunc.playerRV()
-v = gfunc.setAllValuesInArrayTo(v,0) 
+v = gfunc.setAllValuesInArrayTo(v,0)
 local CritChan
 local buben
  for f = 1, #witypes do
-  if inventory["weared"][witypes[f]] ~= 0 and gid[inventory["weared"][witypes[f]]]["props"]["dds"] then
-  buben = gid[inventory["weared"][witypes[f]]]["props"]["dds"]
+  if CGD[pID]["inventory"]["weared"][witypes[f]] ~= 0 and gid[CGD[pID]["inventory"]["weared"][witypes[f]]]["props"]["dds"] then
+  buben = gid[CGD[pID]["inventory"]["weared"][witypes[f]]]["props"]["dds"]
    for e = 1, #buben do
    v[buben[e][1]] = v[buben[e][1]] + buben[e][2]
    end  
   end
-  if inventory["weared"][witypes[f]] ~= 0 and gid[inventory["weared"][witypes[f]]]["type"] == "armors" then
-  v["pdf+"] = v["pdf+"] + gid[inventory["weared"][witypes[f]]]["props"]["pdef"]
-  v["mdf+"] = v["mdf+"] + gid[inventory["weared"][witypes[f]]]["props"]["mdef"] 
+  if CGD[pID]["inventory"]["weared"][witypes[f]] ~= 0 and gid[CGD[pID]["inventory"]["weared"][witypes[f]]]["type"] == "armors" then
+  v["pdf+"] = v["pdf+"] + gid[CGD[pID]["inventory"]["weared"][witypes[f]]]["props"]["pdef"]
+  v["mdf+"] = v["mdf+"] + gid[CGD[pID]["inventory"]["weared"][witypes[f]]]["props"]["mdef"] 
   end
  end
- --
- local vAtds = 8 
- CritChan = 1+mathFloor((strength+v["str+"])/10)
- CritChan = CritChan+mathFloor((intelligence+v["int+"])/10)
+----
+local wtp, slvl
+ for f = 1, #cPlayerSkills do
+ slvl = cPlayerSkills[f][3]
+  if gsd[cPlayerSkills[f][1]]["type"] == "passive" and gsd[cPlayerSkills[f][1]]["action"].weaponreq then
+   for w = 1, #gsd[cPlayerSkills[f][1]]["action"].weaponreq do
+    if CGD[pID]["inventory"]["weared"]["weapon"] ~= 0 and gid[CGD[pID]["inventory"]["weared"]["weapon"]]["subtype"] == gsd[cPlayerSkills[f][1]]["action"].weaponreq then
+	wtp = true
+	end
+   end
+  else
+  wtp = true
+  end
+  
+  if slvl > 0 and gsd[cPlayerSkills[f][1]]["type"] == "passive" and v[gsd[cPlayerSkills[f][1]]["action"].etype] ~= nil and wtp then
+  v[gsd[cPlayerSkills[f][1]]["action"].etype] = v[gsd[cPlayerSkills[f][1]]["action"].etype] + gsd[cPlayerSkills[f][1]]["value"][slvl]
+  end
+ end
+ ----
+ CritChan = 1+mathFloor((CGD[pID]["strength"]+v["str+"])/10)
+ CritChan = CritChan+mathFloor((CGD[pID]["intelligence"]+v["int+"])/10)
  v["vPdm1"], v["vPdm2"], v["vMdm1"], v["vMdm2"] = v["vPdm1"]+v["pdm+"], v["vPdm2"]+v["pdm+"], v["vMdm1"]+v["mdm+"], v["vMdm2"]+v["mdm+"]
- if inventory["weared"]["weapon"] > 0 then
-  if gid[inventory["weared"]["weapon"]]["props"]["phisat"] then
-  v["vPdm1"] = v["vPdm1"] + gid[inventory["weared"]["weapon"]]["props"]["phisat"][1]
-  v["vPdm2"] = v["vPdm2"] + gid[inventory["weared"]["weapon"]]["props"]["phisat"][2]
+ if CGD[pID]["inventory"]["weared"]["weapon"] > 0 then
+  if gid[CGD[pID]["inventory"]["weared"]["weapon"]]["props"]["phisat"] then
+  v["vPdm1"] = v["vPdm1"] + gid[CGD[pID]["inventory"]["weared"]["weapon"]]["props"]["phisat"][1]*(1+v["pwd%"]*0.01)
+  v["vPdm2"] = v["vPdm2"] + gid[CGD[pID]["inventory"]["weared"]["weapon"]]["props"]["phisat"][2]*(1+v["pwd%"]*0.01)
   end
-  if gid[inventory["weared"]["weapon"]]["props"]["magat"] then
-  v["vMdm1"] = v["vMdm1"] + gid[inventory["weared"]["weapon"]]["props"]["magat"][1]
-  v["vMdm2"] = v["vMdm2"] + gid[inventory["weared"]["weapon"]]["props"]["magat"][2]
+  if gid[CGD[pID]["inventory"]["weared"]["weapon"]]["props"]["magat"] then
+  v["vMdm1"] = v["vMdm1"] + gid[CGD[pID]["inventory"]["weared"]["weapon"]]["props"]["magat"][1]*(1+v["mwd%"]*0.01)
+  v["vMdm2"] = v["vMdm2"] + gid[CGD[pID]["inventory"]["weared"]["weapon"]]["props"]["magat"][2]*(1+v["mwd%"]*0.01)
  end
- v.vAtds = gfunc.watds[gid[inventory["weared"]["weapon"]]["subtype"]]
- gsd[1]["reloading"] = weaponHitRate[gid[inventory["weared"]["weapon"]]["subtype"]] or 1
+ v.vAtds = gfunc.watds[gid[CGD[pID]["inventory"]["weared"]["weapon"]]["subtype"]]
+ gsd[1]["reloading"] = weaponHitRate[gid[CGD[pID]["inventory"]["weared"]["weapon"]]["subtype"]] or 1
  end
 vaddsPnts.vSur, vaddsPnts.vStr, vaddsPnts.vInt, vaddsPnts.vPdm1, vaddsPnts.vMdm1, vaddsPnts.vPdm2, vaddsPnts.vMdm2 = v["sur+"], v["str+"], v["int+"], v["vPdm2"], v["vMdm1"], v["vPdm2"], v["vMdm2"]
-CGD[1]["mhp"] = mathCeil(((45+(survivability+v["sur+"])*15+(CGD[1]["lvl"]-1)*28+v["hp+"]))*(1+v["hp%"]/100))
-mmp = mathCeil(((28+(intelligence+v["int+"])*6+(CGD[1]["lvl"]-1)*7+v["mp+"]))*(1+v["mp%"]/100))
-CGD[1]["ptk"] = {
-mathFloor(1+(1+4*(strength+v["str+"])/100)*(CGD[1]["lvl"]+v["vPdm1"])),
-mathCeil(1+(1+4*(strength+v["str+"])/100)*(CGD[1]["lvl"]+v["vPdm2"]))
+CGD[pID]["mhp"] = mathCeil(((45+(CGD[pID]["survivability"]+v["sur+"])*15+(CGD[pID]["lvl"]-1)*28+v["hp+"]))*(1+v["hp%"]/100))
+CGD[pID]["mmp"] = mathCeil(((28+(CGD[pID]["intelligence"]+v["int+"])*6+(CGD[pID]["lvl"]-1)*7+v["mp+"]))*(1+v["mp%"]/100))
+CGD[pID]["ptk"] = {
+mathFloor(1+(1+4*(CGD[pID]["strength"]+v["str+"])/100)*(CGD[pID]["lvl"]+v["vPdm1"])),
+mathCeil(1+(1+4*(CGD[pID]["strength"]+v["str+"])/100)*(CGD[pID]["lvl"]+v["vPdm2"]))
 }
-CGD[1]["mtk"] = {
-mathFloor(1+(1+4*(intelligence+v["int+"])/100)*(CGD[1]["lvl"]+v["vMdm1"])),
-mathCeil(1+(1+4*(intelligence+v["int+"])/100)*(CGD[1]["lvl"]+v["vMdm2"]))
+CGD[pID]["mtk"] = {
+mathFloor(1+(1+4*(CGD[pID]["intelligence"]+v["int+"])/100)*(CGD[pID]["lvl"]+v["vMdm1"])),
+mathCeil(1+(1+4*(CGD[pID]["intelligence"]+v["int+"])/100)*(CGD[pID]["lvl"]+v["vMdm2"]))
 }
-CGD[1]["pdef"] = mathFloor(15+((survivability+v["sur+"])/2+(strength+v["str+"])/4)*(CGD[1]["lvl"]+v["pdf+"]/2))
-CGD[1]["armorpdef"] = v["pdf+"]
-CGD[1]["mdef"] = mathFloor(15+((survivability+v["sur+"])/2+(intelligence+v["int+"])/4)*(CGD[1]["lvl"]+v["mdf+"]/2))
-CGD[1]["armormdef"] = v["mdf+"]
-CGD[1]["cmove"] = true
-CGD[1]["ctck"] = true
-CGD[1]["criticalhc"] = v["chc+"] + CritChan
+CGD[pID]["pdef"] = mathFloor(30+((CGD[pID]["survivability"]+v["sur+"])/2+(CGD[pID]["strength"]+v["str+"])/4)*(CGD[pID]["lvl"]+v["pdf+"]/2))
+CGD[pID]["armorpdef"] = v["pdf+"]
+CGD[pID]["mdef"] = mathFloor(30+((CGD[pID]["survivability"]+v["sur+"])/2+(CGD[pID]["intelligence"]+v["int+"])/4)*(CGD[pID]["lvl"]+v["mdf+"]/2))
+CGD[pID]["armormdef"] = v["mdf+"]
+CGD[pID]["cmove"] = true
+CGD[pID]["ctck"] = true
+CGD[pID]["criticalhc"] = v["chc+"] + CritChan
 vAttackDistance = v.vAtds
 end
 
 function gfunc.maxXP()
 local reqxp = 0
- for e = 1, CGD[1]["lvl"] do
+ for e = 1, CGD[pID]["lvl"] do
   if e <= 15 then
   reqxp = mathFloor(reqxp + reqxp*(2/e) + 50*e^(1/e))
   elseif e > 15 and e < 30 then
@@ -1158,24 +1158,24 @@ local reqxp = 0
   reqxp = mathFloor(reqxp + reqxp*(4/e) + 54*e^(1/e))
   end
  end
-mxp = mathMax(reqxp,1)
+CGD[pID]["mxp"] = mathMax(reqxp,1)
 end
 
 local function addXP(value)
 local xpPlus, limit, i = value or 0, 50, 0
  while i <= limit do
   gfunc.maxXP()
-  if xpPlus <= mxp - cxp then
-  cxp = cxp + xpPlus
+  if xpPlus <= CGD[pID]["mxp"] - CGD[pID]["cxp"] then
+  CGD[pID]["cxp"] = CGD[pID]["cxp"] + xpPlus
   break
   else 
-  xpPlus = xpPlus - (mxp - cxp)
-  cxp = 0
-  charPoints = charPoints + 1
-  CGD[1]["lvl"] = CGD[1]["lvl"] + 1
+  xpPlus = xpPlus - (CGD[pID]["mxp"] - CGD[pID]["cxp"])
+  CGD[pID]["cxp"] = 0
+  CGD[pID]["levelpoints"] = CGD[pID]["levelpoints"] + 1
+  CGD[pID]["lvl"] = CGD[pID]["lvl"] + 1
   gfunc.playerRV()
-  CGD[1]["chp"] = CGD[1]["mhp"]
-  cmp = mmp
+  CGD[pID]["chp"] = CGD[pID]["mhp"]
+  CGD[pID]["cmp"] = CGD[pID]["mmp"]
   i = i + 1
   end
  end
@@ -1185,9 +1185,9 @@ local xpPlus, limit, i = value or 0, 50, 0
 end
 
 local function addCoins(value)
-cCoins = mathMax(cCoins + value, 0)
+CGD[pID]["cash"] = mathMax(CGD[pID]["cash"] + value, 0)
  if cWindowTrd == nil and value ~= nil and value > 0 then
- gfunc.textmsg4("Монеты +"..value.."("..cCoins..")")
+ gfunc.textmsg4("Монеты +"..value.."("..CGD[pID]["cash"]..")")
  end
 end
 
@@ -1243,7 +1243,7 @@ local loadNewImage = true
 	end
 end
 
-function gfunc.loadWorld(id)
+function gfunc.loadWorld(id,unitList)
 stopDrawing = true
 paused = true
 cWindowTrd = nil
@@ -1252,13 +1252,13 @@ cDialog = nil
 paused = false
 world.current = id
 dmLoading()
-consDataR = {"Загрузка уровня id:"..id.." "..world[world.current].name.."..."}
-local n = CGD[1]
+consoleArray = {"Загрузка уровня id:"..id.." "..world[world.current].name.."..."}
+local n = CGD[pID]
 CGD = {}
-CGD[1] = n
-CGD[1]["x"], CGD[1]["mx"], cGlobalx, cBackgroundPos = 1, 1, 1, 1
-CGD[1]["cmove"] = true
-CGD[1]["ctck"] = true
+CGD[pID] = n
+CGD[pID]["x"], CGD[pID]["mx"], cGlobalx, cBackgroundPos = 1, 1, 1, 1
+CGD[pID]["cmove"] = true
+CGD[pID]["ctck"] = true
 imageBuffer = {[-4]=image.load(dir.."sprpic/player_a1.pic"),[-3]=image.load(dir.."sprpic/player_s1.pic"),[-2]=image.load(dir.."sprpic/player_s2.pic"),[-1]=image.load(dir.."sprpic/player_pck.pic"),[0]=image.load(dir.."sprpic/player.pic")}
 bufferenv = {}
 local spx, npx = 0, 0
@@ -1269,16 +1269,16 @@ io.write(string.rep("─",150))
 term.setCursor(5,41)
 io.write(string.rep("─",150))
 gpu.setForeground(0xCCCCCC)
-local cspawnl = world[id].spawnList
+local cspawnl = unitList or world[id].spawnList
  for f = 1, #cspawnl do
   spx = cspawnl[f][2]
-  if f > 1 and #cspawnl[f-1] ~= nil and cspawnl[f-1][4] == "p" then
-  npx = npx + 45
-  spx = npx
-  elseif f > 1 and cspawnl[f-1][4] ~= nil and cspawnl[f-1][6] == "p" then
-  npx = npx + cspawnl[f-1][4] * cspawnl[f-1][5] - cspawnl[f-1][5]
-  spx = npx
-  end
+  -- if f > 1 and #cspawnl[f-1] ~= nil and cspawnl[f-1][4] == "p" then
+  -- npx = npx + 45
+  -- spx = npx
+  -- elseif f > 1 and cspawnl[f-1][4] ~= nil and cspawnl[f-1][6] == "p" then
+  -- npx = npx + cspawnl[f-1][4] * cspawnl[f-1][5] - cspawnl[f-1][5]
+  -- spx = npx
+  -- end
   if gud[cspawnl[f][1]]["nres"] ~= false then
    if cspawnl[f][4] == nil then
    gfunc.addUnit(cspawnl[f][1],spx,cspawnl[f][3])
@@ -1287,9 +1287,9 @@ local cspawnl = world[id].spawnList
     for i = 1, cspawnl[f][4] do
     gfunc.addUnit(cspawnl[f][1],spx+i*cspawnl[f][5]-cspawnl[f][5],cspawnl[f][3])
     CGD[#CGD]["image"] = setImage(cspawnl[f][1])
-    os.sleep()
     end 
    end
+  os.sleep()
   end
  term.setCursor(5,40) 
   for n = 1,mathFloor(f*150/#cspawnl) do
@@ -1305,8 +1305,10 @@ function gfunc.teleport(x,tworld)
  if tworld and tworld ~= world[world.current] then
  gfunc.loadWorld(tworld)
  end
-cGlobalx, cBackgroundPos, CGD[1]["x"], CGD[1]["mx"] = x or 1, x or 1, x or 1, x or 1
+cGlobalx, cBackgroundPos, CGD[pID]["x"], CGD[pID]["mx"] = x or 1, x or 1, x or 1, x or 1
 end
+
+-- Сохранение игры
 
 function gfunc.saveGame(savePath,filename)
  if not fs.exists(savePath) then
@@ -1317,12 +1319,11 @@ local qwertyn = 0
  for f = 1, 600 do
  if gid[cItemRange - 1 + f] then tableInsert(gd,gid[cItemRange - 1 + f]) end
  end
-CGD[1]["chp"] = mathFloor(CGD[1]["chp"])
+CGD[pID]["chp"] = mathFloor(CGD[pID]["chp"])
 local f = io.open(savePath.."/"..filename, "w")
 f:write("Wirthe16_WO_game_save_file\n")
-f:write(ser.serialize(CGD[1]),"\n") -- игрок
-f:write(ser.serialize(inventory),"\n") -- инвентарь
-f:write(ser.serialize({world.current, mathFloor(cmp), mmp, mathFloor(cxp), mxp, cCoins, charPoints, survivability, strength, intelligence}),"\n") -- переменные
+f:write(ser.serialize(CGD[pID]),"\n") -- игрок
+f:write(ser.serialize({world.current}),"\n") -- переменные
 f:write(ser.serialize(cPlayerSkills),"\n")
 f:write(ser.serialize(cUskills),"\n")
 f:write(ser.serialize(gd),"\n") -- предметы из gid
@@ -1334,9 +1335,10 @@ gd = {}
   end
  end
 f:write(ser.serialize(gd),"\n") -- выполненные/заблокированные задания
-gd = {}
- for i = 1, #CGD do
- gd[i] = CGD[i]["resptime"]
+gd = {["u"]={},["t"]={}}
+ for i = 2, #CGD do
+ gd["u"][i-1] = {CGD[i]["id"],CGD[i]["x"],CGD[i]["y"]}
+ gd["t"][i-1] = CGD[i]["resptime"]
  end
 f:write(ser.serialize(gd),"\n") -- чек побитых монстров
 gd = {}
@@ -1346,6 +1348,8 @@ gd = {}
 f:write(ser.serialize(gd)) -- чек нересп. монстров
 f:close()
 end
+
+-- Загрузка игры
 
 function gfunc.loadGame(savePath,filename)
  if fs.exists(savePath.."/"..filename) then
@@ -1362,16 +1366,15 @@ local tkt, tbl, yv = 0
   if tkt >= 600 then break end
  end
  tbl = readFromFile(savePath.."/"..filename)
- yv = ser.unserialize(tbl[4])
- world.current, cmp, mmp, cxp, mxp, cCoins, charPoints, survivability, strength, intelligence = yv[1], yv[2], yv[3], yv[4], yv[5], yv[6], yv[7], yv[8], yv[9], yv[10]
+ yv = ser.unserialize(tbl[3])
+ world.current = yv[1]
  CGD = {}
- CGD[1] = ser.unserialize(tbl[2])
- CGD[1]["image"] = 0
- local buben = CGD[1]["x"]
- inventory = ser.unserialize(tbl[3])
- cPlayerSkills = ser.unserialize(tbl[5])
- cUskills = ser.unserialize(tbl[6])
- yv = ser.unserialize(tbl[7])
+ CGD[pID] = ser.unserialize(tbl[2])
+ CGD[pID]["image"] = 0
+ local buben = CGD[pID]["x"]
+ cPlayerSkills = ser.unserialize(tbl[4])
+ cUskills = ser.unserialize(tbl[5])
+ yv = ser.unserialize(tbl[6])
   for f = 1, #yv do
   gid[yv[f]["id"]] = yv[f]
    if gid[#gid]["oid"] then
@@ -1380,24 +1383,30 @@ local tkt, tbl, yv = 0
    mItemDataNum = mathMax(cItemRange - 1 + f, cItemRange)
    end
   end
- cUquests = ser.unserialize(tbl[8])
+ cUquests = ser.unserialize(tbl[7])
   for b = 1, #cUquests do
   gqd[cUquests[b][1]]["comp"] = false
   end
- yv = ser.unserialize(tbl[9])
+ yv = ser.unserialize(tbl[8])
   for f = 1, #yv do
   gqd[yv[f]]["comp"] = true
   end
- yv = ser.unserialize(tbl[11])
+ yv = ser.unserialize(tbl[10])
   for f = 1, #yv do
   gud[yv[f]]["nres"] = false
   end
- gfunc.loadWorld(world.current)
- yv = ser.unserialize(tbl[10])
-  for f = 1, #yv do
+ yv = ser.unserialize(tbl[9])
+ gfunc.loadWorld(world.current,yv["u"] or world[world.current].spawnList)
+ 
+  for f = 2, #yv["u"] do
    if CGD[f] then
-   if CGD[f]["resptime"] > 0 then CGD[f]["living"] = false else CGD[f]["living"] = true end
-   CGD[f]["resptime"] = yv[f]
+    if yv["t"][f-1] > 0 then
+	CGD[f]["resptime"] = yv["t"][f-1]
+	CGD[f]["living"] = false
+	else
+	CGD[f]["resptime"] = 0
+	CGD[f]["living"] = true
+	end
    end
   end
 
@@ -1427,7 +1436,7 @@ function gfunc.check_npc_dq(id)
 local sdq = false
  if id > 0 and gud[id]["quests"] then
   for f = 1, #gud[id]["quests"] do
-   if gqd[gud[id]["quests"][f]] and gqd[gud[id]["quests"][f]]["comp"] == 0 and CGD[1]["lvl"] >= gqd[gud[id]["quests"][f]]["minlvl"] then
+   if gqd[gud[id]["quests"][f]] and gqd[gud[id]["quests"][f]]["comp"] == 0 and CGD[pID]["lvl"] >= gqd[gud[id]["quests"][f]]["minlvl"] then
    sdq = true
    break
    end
@@ -1453,7 +1462,7 @@ local ccl, cx, cy, dx, dy, btname, vpercentr, halfWidth, subtextninfo
  halfWidth = CGD[f]["width"]/2
  cx, cy = mathFloor(CGD[f]["x"]), mathFloor(CGD[f]["y"])
  dx,dy = cx+75-cGlobalx, 49-cy-CGD[f]["height"] 
-  if CGD[f]["living"] and gfunc.getDistanceToId(1,f) <= 95 then
+  if CGD[f]["living"] and gfunc.getDistanceToId(pID,f) <= 95 then
    if CGD[f]["image"] ~= nil and CGD[f]["spos"] == "r" then
    buffer.image(dx,dy, imageBuffer[CGD[f]["image"]],true)
    elseif CGD[f]["image"] ~= nil and CGD[f]["spos"] == "l" then
@@ -1489,7 +1498,7 @@ local ccl, cx, cy, dx, dy, btname, vpercentr, halfWidth, subtextninfo
    end
   end
 -- надписи над головой
-  if gfunc.getDistanceToId(1,f) <= 95 then
+  if gfunc.getDistanceToId(pID,f) <= 95 then
   subtextninfo = ""
    for m = 1, 2 do
     if CGD[f]["tlinfo"][m] then
@@ -1513,7 +1522,9 @@ local function target(x,y)
  end
 end
 
-local fPauselist = {
+----------------------------------Меню пауза-------------------------------------------------
+
+local pauseMenulist = {
 "Продолжить игру",
 "Инвентарь",
 "Умения персонажа",
@@ -1524,13 +1535,26 @@ local fPauselist = {
 "Выйти из игры"
 }
 
-function gfunc.fPause()
-buffer.square(1, 1, 30, 50, 0x9D9D9D)
+gfunc.pauseMenu = {x=1,y=1,w=25,h=5,buttonX=156,buttonY=2,action={}}
+
+function gfunc.pauseMenu.draw()
+local x, y = gfunc.pauseMenu.x, gfunc.pauseMenu.y
+buffer.square(x, y, 30, 50, 0x9D9D9D)
 buffer.text(13,2,0xffffff,"Пауза")
- for f = 1, #fPauselist do
+ for f = 1, #pauseMenulist do
  buffer.square(1, 1+f*4, 30, 3, 0x838383)
  buffer.set(1,3+f*4,0x959595,0x000000," ")
- buffer.text(mathMax(mathFloor((30/2)-(unicode.len(fPauselist[f])/2)),0),2+f*4,0xffffff,fPauselist[f])
+ buffer.text(mathMax(mathFloor((30/2)-(unicode.len(pauseMenulist[f])/2)),0),2+f*4,0xffffff,pauseMenulist[f])
+ end
+end
+
+gfunc.pauseMenu.action["touch"] = function(ev)
+ for f = 1, #pauseMenulist do
+  if clicked(ev[3],ev[4],1,4+f*4-3,30,3+f*4) then
+  gfunc.pauseMenuMenuAction[f]()
+  ev[3], ev[4] = 0, 0
+  break
+  end
  end
 end
 
@@ -1538,42 +1562,50 @@ local svxpbar = false
 
 local vshowEffDescr, sEffdx, sEffdy = 0, 1, 1
 
-gfunc.playerInfoPanel = {x=1,y=1,w=25,h=5}
+-----------------------------------Панель информация о п------------------------------------------------
+
+gfunc.playerInfoPanel = {x=1,y=1,w=25,h=5,action={}}
 
 function gfunc.playerInfoPanel.draw()
 local x, y, halfWidth = gfunc.playerInfoPanel.x, gfunc.playerInfoPanel.y, gfunc.playerInfoPanel.w / 2
 buffer.square(x, y, gfunc.playerInfoPanel.w+2, 1, 0x8C8C8C)
 buffer.square(x, y+gfunc.playerInfoPanel.h-1, gfunc.playerInfoPanel.w-2, 1, 0x8C8C8C)
 buffer.text(x+gfunc.playerInfoPanel.w-2,y+gfunc.playerInfoPanel.h-1,0x8C8C8C,"◤")
-local fxpdt = tostring(cxp).."/"..tostring(mxp)
-local percent3, roundPrc3 = math.modf(cxp*100/mxp)
+local fxpdt = tostring(CGD[pID]["cxp"]).."/"..tostring(CGD[pID]["mxp"])
+local percent3, roundPrc3 = math.modf(CGD[pID]["cxp"]*100/CGD[pID]["mxp"])
 roundPrc3 = gfunc.roundupnum(roundPrc3*10)
-buffer.text(x+1, y, 0xffffff, "Уровень "..CGD[1]["lvl"])
-local tpbar1 = mathFloor(CGD[1]["chp"]).."/"..mathFloor(CGD[1]["mhp"])
-local tpbar2 = mathFloor(cmp).."/"..mathFloor(mmp)
+buffer.text(x+1, y, 0xffffff, "Уровень "..CGD[pID]["lvl"])
+local tpbar1 = mathFloor(CGD[pID]["chp"]).."/"..mathFloor(CGD[pID]["mhp"])
+local tpbar2 = mathFloor(CGD[pID]["cmp"]).."/"..mathFloor(CGD[pID]["mmp"])
 local tpbar3 = percent3.."."..roundPrc3.."% "
-gfunc.pbar(x,y+1,gfunc.playerInfoPanel.w+2,mathFloor(CGD[1]["chp"]*100/CGD[1]["mhp"]),0xFF0000,0x5B5B5B," ", 0xffffff,1)
+gfunc.pbar(x,y+1,gfunc.playerInfoPanel.w+2,mathFloor(CGD[pID]["chp"]*100/CGD[pID]["mhp"]),0xFF0000,0x5B5B5B," ", 0xffffff,1)
 buffer.text(mathMax(mathFloor((halfWidth)-(#tpbar1/2)),0),y+1,0xffffff,tpbar1)
-gfunc.pbar(x,y+2,gfunc.playerInfoPanel.w+1,mathFloor(cmp*100/mmp),0x0000FF,0x5B5B5B," ", 0xffffff,1)
+gfunc.pbar(x,y+2,gfunc.playerInfoPanel.w+1,mathFloor(CGD[pID]["cmp"]*100/CGD[pID]["mmp"]),0x0000FF,0x5B5B5B," ", 0xffffff,1)
 buffer.text(mathMax(mathFloor((halfWidth)-(#tpbar2/2)),0),y+2,0xffffff,tpbar2)
 gfunc.pbar(x,y+3,gfunc.playerInfoPanel.w,percent3,0xFFFF00,0x5B5B5B," ", 0x333333,1)
 buffer.text(mathMax(mathFloor((halfWidth)-(#tpbar3/2)),0),y+3,0x333333,tpbar3)
 if svxpbar then buffer.text(x+24-#fxpdt, y+3, 0x4F4F4F, fxpdt) end
- for f = 1, #CGD[1]["effects"] do
+ for f = 1, #CGD[pID]["effects"] do
   for h = 1, 2 do
    for w = 1, 3 do
-   buffer.set(x+f*4-4+w,y+5+h,ged[CGD[1]["effects"][f][1]]["i"][2*(3*(h-1)+w)-1],0xffffff,ged[CGD[1]["effects"][f][1]]["i"][2*(3*(h-1)+w)])
+   buffer.set(x+f*4-4+w,y+5+h,ged[CGD[pID]["effects"][f][1]]["i"][2*(3*(h-1)+w)-1],0xffffff,ged[CGD[pID]["effects"][f][1]]["i"][2*(3*(h-1)+w)])
    end
   end
  end
- if vshowEffDescr ~= 0 and CGD[1]["effects"][vshowEffDescr]then
-  buffer.square(sEffdx,sEffdy,mathMax(unicode.len(ged[CGD[1]["effects"][vshowEffDescr][1]]["name"]),unicode.len(ged[CGD[1]["effects"][vshowEffDescr][1]]["descr"])),2,0xA1A1A1,0xffffff," ")
-  buffer.text(sEffdx,sEffdy,0xEDEDED,ged[CGD[1]["effects"][vshowEffDescr][1]]["name"])
-  buffer.text(sEffdx,sEffdy+1,0xCECECE,ged[CGD[1]["effects"][vshowEffDescr][1]]["descr"])
+ if vshowEffDescr ~= 0 and CGD[pID]["effects"][vshowEffDescr]then
+  buffer.square(sEffdx,sEffdy,mathMax(unicode.len(ged[CGD[pID]["effects"][vshowEffDescr][1]]["name"]),unicode.len(ged[CGD[pID]["effects"][vshowEffDescr][1]]["descr"])),2,0xA1A1A1,0xffffff," ")
+  buffer.text(sEffdx,sEffdy,0xEDEDED,ged[CGD[pID]["effects"][vshowEffDescr][1]]["name"])
+  buffer.text(sEffdx,sEffdy+1,0xCECECE,ged[CGD[pID]["effects"][vshowEffDescr][1]]["descr"])
  end
 end
 
-gfunc.targetInfoPanel = {x=60,y=2,w=35,h=4}
+gfunc.playerInfoPanel.action["touch"] = function(ev)
+
+end
+
+------------------------------------Панель информация о цели-----------------------------------------------
+
+gfunc.targetInfoPanel = {x=60,y=2,w=35,h=4,action={}}
 
 function gfunc.targetInfoPanel.showInfo(x,y)
 local cwtype = ""
@@ -1589,8 +1621,8 @@ local sTInfoArray1 = {
 	"ID: "..tostring(CGD[cTarget]["id"]),
 	"Физ.атака: "..CGD[cTarget]["ptk"][1].."-"..CGD[cTarget]["ptk"][2],
 	"Маг.атака: "..CGD[cTarget]["mtk"][1].."-"..CGD[cTarget]["mtk"][2],
-	"Физ.защита: "..tostring(CGD[cTarget]["pdef"].." ("..tostring(mathFloor(100*(CGD[cTarget]["pdef"]/(CGD[cTarget]["pdef"]+CGD[1]["lvl"]*30)))).."%)"),
-	"Маг.защита: "..tostring(CGD[cTarget]["mdef"].." ("..tostring(mathFloor(100*(CGD[cTarget]["mdef"]/(CGD[cTarget]["mdef"]+CGD[1]["lvl"]*30)))).."%)"),
+	"Физ.защита: "..tostring(CGD[cTarget]["pdef"].." ("..tostring(mathFloor(100*(CGD[cTarget]["pdef"]/(CGD[cTarget]["pdef"]+CGD[pID]["lvl"]*30)))).."%)"),
+	"Маг.защита: "..tostring(CGD[cTarget]["mdef"].." ("..tostring(mathFloor(100*(CGD[cTarget]["mdef"]/(CGD[cTarget]["mdef"]+CGD[pID]["lvl"]*30)))).."%)"),
 }
 buffer.square(x, y, 27, 11, 0x6B6B6B)
 gfunc.unicodeframe(x,y,27,11,0x808080)
@@ -1608,7 +1640,7 @@ buffer.text(x,y+3,0x9B9B9B,"◥")
 buffer.text(x+gfunc.targetInfoPanel.w-1,y+3,0x9B9B9B,"◤")
 if CGD[cTarget]["rtype"] == "e" or CGD[cTarget]["rtype"] == "p" or CGD[cTarget]["rtype"] == "m" then
 local chp, mhp = CGD[cTarget]["chp"], CGD[cTarget]["mhp"] 
-local namecolor, clvl, plvl = 0xffffff, CGD[cTarget]["lvl"], CGD[1]["lvl"]
+local namecolor, clvl, plvl = 0xffffff, CGD[cTarget]["lvl"], CGD[pID]["lvl"]
  if clvl >= plvl+2 and clvl <= plvl+4 then namecolor = 0xFFDB80
  elseif clvl >= plvl+5 and clvl <= plvl+7 then namecolor = 0xFF9200
  elseif clvl >= plvl+8 then namecolor = 0xFF1000
@@ -1657,10 +1689,12 @@ if bl then buffer.text(x+1,y+3,0xffffff,"О персонаже") end
  end
 end
 
+-------------------------------Панель умений----------------------------------------------------
+
 local vtskillUsingMsg, skillUsingMsg = 0, {}
 
 gfunc.skillsTopPanel = {
-	x=110,y=1,w=30,h=5,
+	x=110,y=1,w=30,h=5,action={},
 	t={
 	{c = 0x614251, t = "/2"},
 	{c = 0x0000FF, t = "*3"},
@@ -1683,16 +1717,18 @@ buffer.square(x, y, gfunc.skillsTopPanel.w, gfunc.skillsTopPanel.h, 0x9B9B9B)
 if vtskillUsingMsg > 0 then buffer.text(x+1,y+4,0xC1C1C1,skillUsingMsg[#skillUsingMsg]) end
 end
 
+-------------------------------Спонтанные диалоги----------------------------------------------------
+
 local spdialogs = {
 [1]={
-	["text"]=string.rep("Лайк и репост в студию. ",5),
+	["text"]=string.rep("Текст. ",5),
 	{["text"]="Продолжить1",["action"]="close"},
 	{["text"]="Продолжить2",["action"]="close"},
 	{["text"]="Продолжить3",["action"]="close"}
 	}
 }
 
-gfunc.specialDialog = {w=160,h=12,current=1,trg=1}
+gfunc.specialDialog = {w=160,h=12,current=1,trg=1,action={}}
 
 function gfunc.specialDialog.draw()
 local x, y = mathFloor(1+160/2-spDialog.w/2), 1+50-spDialog.h
@@ -1712,7 +1748,9 @@ local ctext
  end
 end
 
-gfunc.npcDialog = {x=12,y=10,w=50,h=24}
+------------------------------Диалоги НПС-----------------------------------------------------
+
+gfunc.npcDialog = {x=12,y=10,w=50,h=24,action={}}
 
 function gfunc.npcDialog.draw(x,y)
 local x, y, w, h = gfunc.npcDialog.x, gfunc.npcDialog.y, gfunc.npcDialog.w, gfunc.npcDialog.h
@@ -1720,7 +1758,7 @@ local isQnComp, isQcomp, sColor = false, false
 insertQuests(cTarget,cDialog)
  for f = 1, #cDialog do
   if not cDialog[f] then
-  table.remove(cDialog,f)
+  tableRemove(cDialog,f)
   end
  end
  for f = 1, #cDialog do
@@ -1735,10 +1773,10 @@ insertQuests(cTarget,cDialog)
     end
    end
    if cDialog[#cDialog-f+1] ~= nil and cDialog[#cDialog-f+1]["action"] == "qdialog" then
-    if isQnComp or gqd[cDialog[#cDialog-f+1]["q"]]["minlvl"] > CGD[1]["lvl"] or gqd[cDialog[#cDialog-f+1]["q"]]["comp"] == true then
-    table.remove(cDialog,#cDialog-f+1)
+    if isQnComp or gqd[cDialog[#cDialog-f+1]["q"]]["minlvl"] > CGD[pID]["lvl"] or gqd[cDialog[#cDialog-f+1]["q"]]["comp"] == true then
+    tableRemove(cDialog,#cDialog-f+1)
     end
-   elseif cDialog[#cDialog-f+1]["action"] == "setWorld" and CGD[1]["lvl"] < cDialog[#cDialog-f+1]["reqlvl"] then
+   elseif cDialog[#cDialog-f+1]["action"] == "setWorld" and CGD[pID]["lvl"] < cDialog[#cDialog-f+1]["reqlvl"] then
    cDialog[#cDialog-f+1]["text"] = unicode.sub(cDialog[#cDialog-f+1]["text"],1,unicode.len(cDialog[#cDialog-f+1]["text"])-#tostring(cDialog[#cDialog-f+1]["reqlvl"])-2)
    cDialog[#cDialog-f+1]["text"] = cDialog[#cDialog-f+1]["text"].." "..cDialog[#cDialog-f+1]["reqlvl"].."+"
    end
@@ -1774,8 +1812,108 @@ local text2 = gfunc.textWrap(cDialog["text"],w-4)
  end
 end
 
-function gfunc.itemSubtypeToRus(subtype)
-local massiv = {
+gfunc.npcDialog.action["touch"] = function(ev)
+local closeButtonX = gfunc.npcDialog.x+gfunc.npcDialog.w-1
+ for f = 1, #cDialog do
+  if cDialog[f]["action"] == "getquest" and gqd[cDialog[f]["do"]]["comp"] == true then
+  tableRemove(cDialog[f])
+  end
+ end
+   for f = 1, #cDialog do
+    if ev[5] == 0 and clicked(ev[3],ev[4],gfunc.npcDialog.x+2,gfunc.npcDialog.y+14+f,gfunc.npcDialog.x+gfunc.npcDialog.w-2,gfunc.npcDialog.y+14+f) then
+	 if cDialog[f]["action"] == "close" then
+	 cWindowTrd = nil
+	 cDialog = nil
+	 paused = false
+	 elseif cDialog[f]["action"] == "trade" then
+	 gfunc.tradew.loaded = loadfile(dir.."data/trade.data")(cDialog[f]["do"])
+	 gfunc.tradew.sect = 1
+	 cWindowTrd = "tradewindow"
+	 elseif cDialog[f]["action"] == "craft" then
+	 gfunc.craftw.loaded = loadfile(dir.."data/manufacturing.data")(cDialog[f]["do"])
+	 gfunc.craftw.sect = 1
+	 cWindowTrd = "craftwindow"
+	 elseif cDialog[f]["action"] == "dialog" then
+	 cDialog = cDialog[f]["do"]
+	 elseif cDialog[f]["action"] == "qdialog" and CGD[pID]["lvl"] >= gqd[cDialog[f]["q"]]["minlvl"] then
+	 cDialog = cDialog[f]["do"]
+	 elseif cDialog[f]["action"] == "getquest" and gqd[cDialog[f]["do"]]["comp"] == 0 and CGD[pID]["lvl"] >= gqd[cDialog[f]["do"]]["minlvl"] then
+	 getQuest(cDialog[f]["do"])
+	 gqd[cDialog[f]["do"]]["qstgve"] = CGD[cTarget]["id"]
+	 gqd[cDialog[f]["do"]]["comp"] = false
+	 cWindowTrd = nil
+	 cDialog = nil
+	 paused = false
+	 elseif cDialog[f]["action"] == "cmpquest" then
+	  for t = 1, #cUquests do
+	   if cUquests[t][1] == cDialog[f]["do"] and cUquests[t][3] then
+	    if gqd[cDialog[f]["do"]]["type"] == "f" then
+		 for l = 1, #gqd[cDialog[f]["do"]]["targ"] do
+		  for k = 1, #CGD[pID]["inventory"]["bag"] do
+		   if CGD[pID]["inventory"]["bag"][k][1] == gqd[cDialog[f]["do"]]["targ"][l][1] and CGD[pID]["inventory"]["bag"][k][2] >= gqd[cDialog[f]["do"]]["targ"][l][2] then
+		   CGD[pID]["inventory"]["bag"][k][2] = CGD[pID]["inventory"]["bag"][k][2] - gqd[cDialog[f]["do"]]["targ"][l][2]
+		   end
+		  end
+		 end
+		end
+	   -- *награда за задание*
+	    if gqd[cDialog[f]["do"]]["qreward"] then
+		 if type(gqd[cDialog[f]["do"]]["qreward"]["item"]) == "table" and #gqd[cDialog[f]["do"]]["qreward"]["item"] <= gfunc.checkInventorySpace() then
+		 gfunc.GetQuestReward(cDialog[f]["do"])	
+		 tenb = true
+		 elseif type(gqd[cDialog[f]["do"]]["qreward"]["item"]) == "table" and #gqd[cDialog[f]["do"]]["qreward"]["item"] > gfunc.checkInventorySpace() then
+		 gfunc.textmsg1("Необходимо "..#gqd[cDialog[f]["do"]]["qreward"]["item"].." ячеек в инвентаре")
+		 tenb = false
+		 end
+		 if gqd[cDialog[f]["do"]]["qreward"]["item"] == nil then tenb = true; gfunc.GetQuestReward(cDialog[f]["do"]) end
+		end
+		if tenb and not gqd[cDialog[f]["do"]]["fct"] then
+	     if not gqd[cDialog[f]["do"]]["repeat"] then
+		 gqd[cDialog[f]["do"]]["comp"] = true
+	     else
+		 gqd[cDialog[f]["do"]]["comp"] = 0
+		 end
+	    tableRemove(cUquests,t)
+	    cWindowTrd = nil
+	    cDialog = nil
+	    paused = false
+	    break
+	    elseif tenb and gqd[cDialog[f]["do"]]["fct"] then
+		 if gqd[cDialog[f]["do"]]["fct"] == "setquest" then
+		  if not gqd[cDialog[f]["do"]]["repeat"] then
+		  gqd[cDialog[f]["do"]]["comp"] = true
+	      else
+		  gqd[cDialog[f]["do"]]["comp"] = 0
+		  end
+		  getQuest(gqd[cDialog[f]["do"]]["value"])
+		  gfunc.textmsg1("Задание '"..gqd[gqd[cDialog[f]["do"]]["value"]]["name"].."' получено") 
+		  gqd[gqd[cDialog[f]["do"]]["value"]]["qstgve"] = CGD[cTarget]["id"]
+		  gqd[gqd[cDialog[f]["do"]]["value"]]["comp"] = false
+		  tableRemove(cUquests,t)
+	      cWindowTrd = nil
+	      cDialog = nil
+	      paused = false
+		  break
+		 end
+		end
+	   end
+	  end
+	 elseif cDialog[f]["action"] == "setWorld" and CGD[pID]["lvl"] >= cDialog[f]["reqlvl"] then
+	 gfunc.teleport(cDialog[f]["do"][2] or 1,cDialog[f]["do"][1] or 1)
+	 end
+	end
+   end
+ if clicked(ev[3],ev[4],closeButtonX,gfunc.npcDialog.y,closeButtonX,gfunc.npcDialog.y) then
+ cWindowTrd = nil
+ cDialog = nil
+ paused = false   
+ end
+end
+
+
+-----------------------------Окно инвентарь------------------------------------------------------
+
+local awSutypeList = {
 ["helmet"] = "Шлем",
 ["armor"] = "Броня",
 ["pants"] = "Штаны",
@@ -1783,12 +1921,10 @@ local massiv = {
 ["pendant"] = "Кулон",
 ["robe"] = "Накидка",
 ["ring"] = "Кольцо",
-["sword"] = "Меч",
-["spear"] = "Копьё",
-["axe"] = "Короткая секира",
+[1] = "Меч",
+[2] = "Копьё",
+[3] = "Короткая секира",
 }
-return massiv[subtype]
-end
 
 local invTItem = 0
 local invcTItem, invcTargetItem, showItemData = 0, 0, false
@@ -1815,7 +1951,7 @@ local function giiwcAdd(t,c) tableInsert(info,{tostring(t),c}) end
 local itemtype, itemsubtype = gid[id]["type"], gid[id]["subtype"] 
 giiwcAdd(gid[id]["name"], gid[id]["ncolor"])
  if itemtype == "armors" or itemtype == "weapon" then
- giiwcAdd(gfunc.itemSubtypeToRus(itemsubtype), 0xBCBCBC)
+ giiwcAdd(awSutypeList[itemsubtype], 0xBCBCBC)
  giiwcAdd("Уровень "..tostring(gid[id]["lvl"]), 0xffffff)
  end
  if itemtype == "weapon" then
@@ -1838,7 +1974,7 @@ giiwcAdd(gid[id]["name"], gid[id]["ncolor"])
   elseif gid[id]["subtype"] == "mana" then
   giiwcAdd("Восстановить "..tostring(ged[2]["val"][gid[id]["lvl"]]).." ед. маны за 10 секунд", 0xEFEFEF)
   end
-  if gid[id]["reqlvl"] > CGD[1]["lvl"] then
+  if gid[id]["reqlvl"] > CGD[pID]["lvl"] then
   giiwcAdd("Требуемый уровень: "..gid[id]["reqlvl"], 0xFF0000)
   else
   giiwcAdd("Требуемый уровень: "..gid[id]["reqlvl"], 0xffffff)
@@ -1895,7 +2031,7 @@ local wItemTypes = {
 
 local itemInfo
 
-gfunc.inventory = {x=1,y=1,w=160,h=50}
+gfunc.inventory = {x=1,y=1,w=160,h=50,b1={x=2,y=47,w=14},action={}}
 
 function gfunc.inventory.draw()
 local x, y = gfunc.inventory.x, gfunc.inventory.y
@@ -1921,19 +2057,19 @@ buffer.square(x+106, y+1, 43, 45, 0x4A4A4A)
    end
   end
  end
-buffer.text(x+1,y,0xC4C420,"●•. Монеты: "..tostring(cCoins))
+buffer.text(x+1,y,0xC4C420,"●•. Монеты: "..tostring(CGD[pID]["cash"]))
 buffer.text(x+75,y,0xffffff,"Инвентарь")
 buffer.text(x+152,y,0xffffff,"Закрыть")
  for y1 = 1, 4 do
   for x1 = 1, 5 do
   formula, xps, yps = (y1-1)*5+x1, x+1+x1*21-21, y+2+y1*11-11
-   if inventory["bag"][formula][1] ~= 0 and inventory["bag"][formula][2] ~= 0 then
+   if CGD[pID]["inventory"]["bag"][formula][1] ~= 0 and CGD[pID]["inventory"]["bag"][formula][2] ~= 0 then
     if iconImageBuffer[formula] then
-	 if gid[inventory["bag"][formula][1]] then
+	 if gid[CGD[pID]["inventory"]["bag"][formula][1]] then
 	 buffer.image(xps, yps, iconImageBuffer[formula])
-	  if inventory["bag"][formula][2] > 1 then
-      buffer.square(xps, yps+9, #tostring(inventory["bag"][formula][2]), 1, 0x4A4A4A)
-	  buffer.text(xps,yps+9,0xffffff,tostring(inventory["bag"][formula][2]))
+	  if CGD[pID]["inventory"]["bag"][formula][2] > 1 then
+      buffer.square(xps, yps+9, #tostring(CGD[pID]["inventory"]["bag"][formula][2]), 1, 0x4A4A4A)
+	  buffer.text(xps,yps+9,0xffffff,tostring(CGD[pID]["inventory"]["bag"][formula][2]))
       end
 	 else
 	 buffer.image(xps, yps, image.load(dir.."image/itemnotex.pic"))
@@ -1947,9 +2083,9 @@ buffer.text(x+152,y,0xffffff,"Закрыть")
  for y1 = 1, 4 do
   for x1 = 1, 2 do
    formula, xps, yps = (y1-1)*2+x1, 107+x1*21-21, 3+y1*11-11
-   if inventory["weared"][wItemTypes[formula]] ~= 0 then
+   if CGD[pID]["inventory"]["weared"][wItemTypes[formula]] ~= 0 then
     if iconImageBuffer[wItemTypes[formula]] then
-	 if gid[inventory["weared"][wItemTypes[formula]]] then
+	 if gid[CGD[pID]["inventory"]["weared"][wItemTypes[formula]]] then
 	 buffer.image(xps, yps, iconImageBuffer[wItemTypes[formula]])
 	 else
 	 buffer.image(xps, yps, image.load(dir.."image/itemnotex.pic"))
@@ -1962,12 +2098,168 @@ buffer.text(x+152,y,0xffffff,"Закрыть")
  end
 buffer.text(2,48,0x444444,sMSG3)
  if showItemData and invcTItem ~= 0 then
- buffer.square(x+1,y+46,unicode.len(textRemoveItem),1,0x3c539e)
- buffer.text(x+1,y+46,0xFEFEFE,textRemoveItem)
+ buffer.square(gfunc.inventory.b1.x,gfunc.inventory.b1.y,unicode.len(textRemoveItem),1,0x3c539e)
+ buffer.text(gfunc.inventory.b1.x,gfunc.inventory.b1.y,0xFEFEFE,textRemoveItem)
  -- описание
  gfunc.drawItemDescription(invIdx,invIdy,itemInfo)
  end
 end
+
+
+gfunc.inventory.action["touch"] = function(ev)
+ if clicked(ev[3],ev[4],gfunc.inventory.x+gfunc.inventory.w-8,gfunc.inventory.y,gfunc.inventory.x+gfunc.inventory.w-1,gfunc.inventory.y) then
+ cWindowTrd = "pause"
+ iconImageBuffer = {}
+ end
+  -- кнопка выбросить предмет
+  if showItemData and invcTargetItem ~= 0 and clicked(ev[3],ev[4],gfunc.inventory.b1.x,gfunc.inventory.b1.y,gfunc.inventory.b1.x+gfunc.inventory.b1.w,gfunc.inventory.b1.y) then
+  -- чистка памяти при утрате предмета
+   if CGD[pID]["inventory"]["bag"][invcTargetItem][1] >= cItemRange then 
+   gid[CGD[pID]["inventory"]["bag"][invcTargetItem][1]] = nil 
+   end
+  -- пустая ячейка в инв.
+  CGD[pID]["inventory"]["bag"][invcTargetItem] = {0,0}
+  -- чистка ячейки буфера
+  iconImageBuffer[invcTargetItem] = nil
+  -- скрыть описание
+  showItemData, invcTargetItem, itemInfo = false, 0, nil
+  end
+ local fbParam = true
+ local nwitemuwr, xps, yps
+  for f = 1, 4 do
+   for i = 1, 5 do
+   xps, yps = 2+i*21-21, 3+f*11-11
+   formula = (f-1)*5+i
+	if CGD[pID]["inventory"]["bag"][formula][1] ~= 0 and CGD[pID]["inventory"]["bag"][formula][2] ~= 0 then
+     if clicked(ev[3],ev[4],xps,yps,xps+19,yps+9) then
+	 pItem = gid[CGD[pID]["inventory"]["bag"][formula][1]]
+	  if ev[5] == 0 then
+	  invcTItem = CGD[pID]["inventory"]["bag"][formula][1]
+	  invcTargetItem = formula
+      invTItem = CGD[pID]["inventory"]["bag"][formula][2]
+	  itemInfo = gfunc.getItemInfo(CGD[pID]["inventory"]["bag"][formula][1])
+	  showItemData = true
+      invIdx, invIdy = ev[3], ev[4]
+	  fbParam = false
+	  break
+	  elseif ev[5] == 1 and gid[CGD[pID]["inventory"]["bag"][formula][1]] then
+	   -- armors
+	   if pItem["type"] == "armors" and CGD[pID]["lvl"] >= pItem["reqlvl"] then
+		if CGD[pID]["inventory"]["weared"][pItem["subtype"]] == 0 then
+	    CGD[pID]["inventory"]["weared"][pItem["subtype"]] = CGD[pID]["inventory"]["bag"][formula][1]
+		iconImageBuffer[pItem["subtype"]] = image.load(dir.."itempic/"..loadedItemIcons[gid[CGD[pID]["inventory"]["bag"][formula][1]]["icon"]]..".pic")
+		CGD[pID]["inventory"]["bag"][formula][1] = 0
+		CGD[pID]["inventory"]["bag"][formula][2] = 0
+		 if iconImageBuffer[formula] ~= nil then
+		 iconImageBuffer[formula] = nil
+		 end
+	    else
+		nwitemuwr = CGD[pID]["inventory"]["weared"][pItem["subtype"]]
+		CGD[pID]["inventory"]["weared"][pItem["subtype"]] = CGD[pID]["inventory"]["bag"][formula][1]
+		iconImageBuffer[gid[nwitemuwr]["subtype"]] = image.load(dir.."itempic/"..loadedItemIcons[gid[CGD[pID]["inventory"]["bag"][formula][1]]["icon"]]..".pic")
+		CGD[pID]["inventory"]["bag"][formula][1] = nwitemuwr
+		CGD[pID]["inventory"]["bag"][formula][2] = 1
+		iconImageBuffer[formula] = image.load(dir.."itempic/"..loadedItemIcons[gid[nwitemuwr]["icon"]]..".pic")
+		end
+		-- weapon
+	   elseif pItem["type"] == "weapon" and CGD[pID]["lvl"] >= pItem["reqlvl"] then
+		if CGD[pID]["inventory"]["weared"]["weapon"] == 0 then
+	    CGD[pID]["inventory"]["weared"]["weapon"] = CGD[pID]["inventory"]["bag"][formula][1]
+		iconImageBuffer["weapon"] = image.load(dir.."itempic/"..loadedItemIcons[gid[CGD[pID]["inventory"]["bag"][formula][1]]["icon"]]..".pic")
+		CGD[pID]["inventory"]["bag"][formula][1] = 0
+		CGD[pID]["inventory"]["bag"][formula][2] = 0
+		 if iconImageBuffer[formula] ~= nil then
+		 iconImageBuffer[formula] = nil
+		 end		 
+		else
+		nwitemuwr = CGD[pID]["inventory"]["weared"]["weapon"]
+		CGD[pID]["inventory"]["weared"]["weapon"] = CGD[pID]["inventory"]["bag"][formula][1]
+		iconImageBuffer["weapon"] = image.load(dir.."itempic/"..loadedItemIcons[gid[CGD[pID]["inventory"]["bag"][formula][1]]["icon"]]..".pic")
+		CGD[pID]["inventory"]["bag"][formula][1] = nwitemuwr
+		CGD[pID]["inventory"]["bag"][formula][2] = 1
+		iconImageBuffer[formula] = image.load(dir.."itempic/"..loadedItemIcons[gid[nwitemuwr]["icon"]]..".pic")
+		end
+	   -- potion
+	   elseif pItem["type"] == "chest" then
+		for t = 1, #pItem["props"] do
+		 if 10^3-pItem["props"][t][3]*10 <= gfunc.random(1,10^3) then
+		 addItem(pItem["props"][t][1],pItem["props"][t][2])
+		 break
+		 end
+		end
+       gfunc.textmsg3("Использован предмет "..pItem["name"])
+	   CGD[pID]["inventory"]["bag"][formula][2] = CGD[pID]["inventory"]["bag"][formula][2] - 1
+		elseif pItem["type"] == "tlp" then
+		CGD[pID]["x"], cGlobalx, cBackgroundPos = 1, 1, 1
+		gfunc.textmsg3("Использован предмет "..pItem["name"])
+		CGD[pID]["inventory"]["bag"][formula][2] = CGD[pID]["inventory"]["bag"][formula][2]	- 1	
+		elseif pItem["type"] == "potion" and CGD[pID]["lvl"] >= pItem["reqlvl"] then
+		 if pItem["subtype"] == "health" then
+		 gfunc.addUnitEffect(pID,1,pItem["lvl"])
+		 CGD[pID]["inventory"]["bag"][formula][2] = CGD[pID]["inventory"]["bag"][formula][2] - 1
+		 elseif pItem["subtype"] == "mana" then
+		 gfunc.addUnitEffect(pID,2,pItem["lvl"])
+		 CGD[pID]["inventory"]["bag"][formula][2] = CGD[pID]["inventory"]["bag"][formula][2] - 1
+		 end
+		gfunc.textmsg3("Использован предмет "..pItem["name"])
+		end
+	   nwitemuwr = nil
+	   break
+	   end
+	  end
+     end
+    formula = nil
+	end
+   end
+   for f = 1, 4 do
+    for i = 1, 2 do
+     formula, xps, yps = (f-1)*2+i, 107+i*21-21, 3+f*11-11
+	 if CGD[pID]["inventory"]["weared"][wItemTypes[formula]] ~= 0 then
+      if clicked(ev[3],ev[4],xps,yps,xps+19,yps+9) then
+	   if ev[5] == 0 then
+	   invcTItem = CGD[pID]["inventory"]["weared"][wItemTypes[formula]]
+	   invTItem = 1
+	   showItemData = true
+	   itemInfo = gfunc.getItemInfo(CGD[pID]["inventory"]["weared"][wItemTypes[formula]])
+       invIdx, invIdy = ev[3], ev[4]
+	   fbParam = false
+	   break
+	   else
+       nwitemuwr = addItem(CGD[pID]["inventory"]["weared"][wItemTypes[formula]],1)
+	   iconImageBuffer[nwitemuwr] = image.load(dir.."itempic/"..loadedItemIcons[gid[CGD[pID]["inventory"]["weared"][wItemTypes[formula]]]["icon"]]..".pic")
+	   CGD[pID]["inventory"]["weared"][wItemTypes[formula]] = 0
+	   	if iconImageBuffer[wItemTypes[formula]] ~= nil then
+		iconImageBuffer[wItemTypes[formula]] = nil
+		end	   
+	   nwitemuwr = nil
+	   end
+	  end
+	 end
+	 if CGD[pID]["inventory"]["weared"][wItemTypes[formula]] == 0 then
+	  if clicked(ev[3],ev[4],xps,yps,xps+19,yps+9) then
+	   if ev[5] == 0 then
+	   invcTItem = 1
+	   showItemData = true
+	   itemInfo = {{gfunc.getWItemTypeName(wItemTypes[formula]),0xFFFFFF}}
+       invIdx, invIdy = ev[3], ev[4]
+	   fbParam = false
+	   end
+	  end
+	 end
+    formula = nil
+	end
+   end
+   if fbParam then
+   invcTargetItem = 0
+   invTItem = 0
+   showItemData = false
+   invIdx, invIdy = 1, 1
+   end
+ gfunc.playerRV()
+end
+
+
+-----------------------------Окно торговля------------------------------------------------------
 
 function gfunc.genitiveWordEnding(rstring,number)
 local numokn,numpokn,cletter = tonumber(string.sub(tostring(number),-1,-1)), tonumber(string.sub(tostring(number),-2,-2)), ""
@@ -1983,6 +2275,7 @@ return rstring..cletter
 end
 
 gfunc.tradew = {
+	action = {},
 	loaded = {},
 	titem = 0,
 	titemcount = 1,
@@ -1998,6 +2291,9 @@ gfunc.tradew = {
 	cHeight = 15
 }
 
+gfunc.tradew.twx = mathFloor(80-gfunc.tradew.cWidth/2)
+gfunc.tradew.twy = mathFloor(25-gfunc.tradew.cHeight/2)
+
 function gfunc.tradew.draw()
 local x, y = gfunc.tradew.x, gfunc.tradew.y
 buffer.square(x, y, gfunc.tradew.w, gfunc.tradew.h, 0x9B9B9B)
@@ -2007,7 +2303,7 @@ local hclr
 local t = "Торговля"
 buffer.text(mathMax(80-(unicode.len(t)/2), 0), y, 0xffffff, t)
 buffer.text(x+gfunc.tradew.w-9,y,0xffffff,"Закрыть")
-buffer.text(x+1,y,0xffffff,"Монеты "..cCoins)
+buffer.text(x+1,y,0xffffff,"Монеты "..CGD[pID]["cash"])
 hclr = {"Перейти к продаже","Перейти к покупке"}
 buffer.square(x+118, y+1, unicode.len(hclr[gfunc.tradew.torg])+2, 3, 0x8a8a8a)
 buffer.text(x+119, y+2,0xffffff,hclr[gfunc.tradew.torg])
@@ -2032,7 +2328,7 @@ buffer.text(x+119, y+2,0xffffff,hclr[gfunc.tradew.torg])
   end
   local tn = "Купить"
   if gfunc.tradew.titem > 0 then
-  local clr, smx, smy = 0xCCCCCC, mathFloor(80-gfunc.tradew.cWidth/2), mathFloor(25-gfunc.tradew.cHeight/2)
+  local clr, smx, smy = 0xCCCCCC, gfunc.tradew.twx, gfunc.tradew.twy
   buffer.square(smx, smy, gfunc.tradew.cWidth, gfunc.tradew.cHeight, 0x828282)
   gfunc.unicodeframe(smx, smy, gfunc.tradew.cWidth, gfunc.tradew.cHeight, 0x4c4c4c)
   buffer.square(smx-23, smy, 22, 12, 0x828282)
@@ -2045,7 +2341,7 @@ buffer.text(x+119, y+2,0xffffff,hclr[gfunc.tradew.torg])
   buffer.text(smx+13,smy+3, clr, "+ "..gfunc.tradew.titemcount.." -")
   buffer.text(smx+1,smy+4, clr, "Цена: "..gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["cost"]..gfunc.genitiveWordEnding(" монет",gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["cost"]))
   local td = clr
-  if gfunc.tradew.titemcount*gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["cost"] > cCoins then td = 0xb71202 end
+  if gfunc.tradew.titemcount*gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["cost"] > CGD[pID]["cash"] then td = 0xb71202 end
   buffer.text(smx+1,smy+5, td, "Стоимость: "..tostring(gfunc.tradew.titemcount*gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["cost"])..gfunc.genitiveWordEnding(" монет",gfunc.tradew.titemcount*gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["cost"]))
   buffer.square(smx, smy+gfunc.tradew.cHeight, gfunc.tradew.cWidth, 3, 0x0054cb5)
   buffer.text(smx+(gfunc.tradew.cWidth/2-unicode.len(tn)/2), smy+gfunc.tradew.cHeight+1, clr, tn)
@@ -2057,9 +2353,9 @@ buffer.text(x+119, y+2,0xffffff,hclr[gfunc.tradew.torg])
   buffer.text(x+50,y+3,0xC2C2C2,"Количество")
   buffer.text(x+70,y+3,0xC2C2C2,"Цена за единицу")
   gfunc.tradew.asmt = {}
-  for f = 1, #inventory["bag"] do
-   if inventory["bag"][f][1] ~= 0 and inventory["bag"][f][2] ~= 0 then
-   tableInsert(gfunc.tradew.asmt,inventory["bag"][f])
+  for f = 1, #CGD[pID]["inventory"]["bag"] do
+   if CGD[pID]["inventory"]["bag"][f][1] ~= 0 and CGD[pID]["inventory"]["bag"][f][2] ~= 0 then
+   tableInsert(gfunc.tradew.asmt,CGD[pID]["inventory"]["bag"][f])
    end
   end
   for f = 1, 25 do
@@ -2089,7 +2385,103 @@ buffer.text(x+119, y+2,0xffffff,hclr[gfunc.tradew.torg])
  end
 end
 
+gfunc.tradew.action["touch"] = function(ev)
+ if ev[5] == 0 and clicked(ev[3],ev[4],gfunc.tradew.x+gfunc.tradew.w-8,gfunc.tradew.y,gfunc.tradew.x+gfunc.tradew.w-1,gfunc.tradew.y) then
+ gfunc.tradew.titem = 0
+ gfunc.tradew.titemcount = 1
+ gfunc.tradew.sect = 1
+ gfunc.tradew.tScrl = 1
+ gfunc.tradew.torg = 1
+ gfunc.tradew.asmt = {}
+ cWindowTrd = nil
+ cDialog = nil
+ paused = false
+ itemInfo = nil
+ end
+    if ev[5] == 0 and gfunc.tradew.torg == 1 and gfunc.tradew.titem == 0 and clicked(ev[3],ev[4],119,2,136,4) then 
+	gfunc.tradew.torg = 2 
+	gfunc.tradew.titem = 0
+    elseif ev[5] == 0 and gfunc.tradew.torg == 2 and clicked(ev[3],ev[4],119,2,136,4) then
+	gfunc.tradew.torg = 1 
+	gfunc.tradew.titem = 0
+	gfunc.tradew.titemcount = 1
+    iconImageBuffer = {}
+	end
+   if gfunc.tradew.torg == 2 then
+    for f = 1, #gfunc.tradew.asmt do
+	 if ev[5] == 0 and clicked(ev[3],ev[4],2,5+f,85,5+f) then
+	 iconImageBuffer[1] = image.load(dir.."itempic/"..loadedItemIcons[gid[gfunc.tradew.asmt[f][1]]["icon"]]..".pic")
+	 itemInfo = gfunc.getItemInfo(gfunc.tradew.asmt[f][1])
+	 gfunc.tradew.titem = f
+	 gfunc.tradew.titemcount = 1
+	 end
+	end
+	if gfunc.tradew.titem > 0 then
+	 if ev[5] == 0 then
+	  if clicked(ev[3],ev[4],119,8,119,8) and gfunc.tradew.titemcount < gfunc.tradew.asmt[gfunc.tradew.titem][2] then
+	  gfunc.tradew.titemcount = gfunc.tradew.titemcount + 1
+	  elseif clicked(ev[3],ev[4],126,8,126,8) and gfunc.tradew.titemcount > 1 then
+	  gfunc.tradew.titemcount = gfunc.tradew.titemcount - 1
+	  elseif clicked(ev[3],ev[4],121,9,125,9) then
+	  gfunc.tradew.titemcount = gfunc.tradew.asmt[gfunc.tradew.titem][2]
+	  end
+	  if clicked(ev[3],ev[4],130,7,145,9) then
+	   for d = 1, #CGD[pID]["inventory"]["bag"] do
+		if CGD[pID]["inventory"]["bag"][d][1] == gfunc.tradew.asmt[gfunc.tradew.titem][1] then 
+		CGD[pID]["cash"] = CGD[pID]["cash"] + gfunc.tradew.titemcount*gid[gfunc.tradew.asmt[gfunc.tradew.titem][1]]["cost"]
+		CGD[pID]["inventory"]["bag"][d][2] = CGD[pID]["inventory"]["bag"][d][2] - gfunc.tradew.titemcount
+		for h = 1, #CGD[pID]["inventory"]["bag"] do if CGD[pID]["inventory"]["bag"][h][2] <= 0 then CGD[pID]["inventory"]["bag"][h][1] = 0 end end
+		iconImageBuffer = {}
+		gfunc.tradew.titem = 0
+		gfunc.tradew.titemcount = 1
+	    break
+		end
+	   end
+	  end
+	 end
+	end
+   elseif gfunc.tradew.torg == 1 and gfunc.tradew.titem == 0 then
+    for c = 1, #gfunc.tradew.loaded do
+	 if ev[5] == 0 and clicked(ev[3],ev[4],2+c*26-26, 2, 2+c*25, 2) then
+	 gfunc.tradew.sect = c
+	 break
+	 end
+	end
+	for c = 1, mathMin(#gfunc.tradew.loaded[gfunc.tradew.sect], 24) do
+     if clicked(ev[3],ev[4],2,5+c*2-2,160,5+c*2) then
+	 gfunc.tradew.titem = c+4*gfunc.tradew.tScrl-4
+	 itemInfo = gfunc.getItemInfo(gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["item"])
+	 iconImageBuffer = {[1]=image.load(dir.."itempic/"..loadedItemIcons[gid[gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["item"]]["icon"]]..".pic")}
+	 break
+	 end
+    end
+   elseif gfunc.tradew.torg == 1 and gfunc.tradew.titem > 0 then
+    if ev[5] == 0 and gid[gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["item"]]["stackable"] and gfunc.tradew.titemcount < 100 and clicked(ev[3],ev[4],gfunc.tradew.twx+13, gfunc.tradew.twy+3,gfunc.tradew.twx+13, gfunc.tradew.twy+3) then -- +
+    gfunc.tradew.titemcount = gfunc.tradew.titemcount + 1
+    elseif ev[5] == 0 and gfunc.tradew.titemcount > 1 and clicked(ev[3],ev[4],gfunc.tradew.twx+16+#tostring(gfunc.tradew.titemcount), gfunc.tradew.twy+3,gfunc.tradew.twx+16+#tostring(gfunc.tradew.titemcount), gfunc.tradew.twy+3) then -- -
+    gfunc.tradew.titemcount = gfunc.tradew.titemcount - 1
+    end
+    -- купить
+	if clicked(ev[3],ev[4],gfunc.tradew.twx,gfunc.tradew.twy+gfunc.tradew.cHeight,gfunc.tradew.twx+gfunc.tradew.cWidth,gfunc.tradew.twy+gfunc.tradew.cHeight+3) and CGD[pID]["cash"] >= gfunc.tradew.titemcount*gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["cost"] then
+	CGD[pID]["cash"] = CGD[pID]["cash"] - gfunc.tradew.titemcount*gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["cost"]
+	addItem(gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["item"],gfunc.tradew.titemcount)
+	gfunc.tradew.titem = 0
+	gfunc.tradew.titemcount = 1	
+	iconImageBuffer = {}
+	end
+	-- закрыть
+	if clicked(ev[3],ev[4],gfunc.tradew.twx+gfunc.tradew.cWidth-2, gfunc.tradew.twy, gfunc.tradew.twx+gfunc.tradew.cWidth-2, gfunc.tradew.twy) then
+	gfunc.tradew.titem = 0
+	gfunc.tradew.titemcount = 1
+	iconImageBuffer = {}
+	end
+   end
+end
+
+-----------------------------Окно создание------------------------------------------------------
+
 gfunc.craftw = {
+	action = {},
 	loaded = {},
 	titem = 0,
 	titemcount = 1,
@@ -2103,6 +2495,9 @@ gfunc.craftw = {
 	cHeight = 15
 }
 
+gfunc.craftw.twx = mathFloor(80-gfunc.craftw.cWidth/2)
+gfunc.craftw.twy = mathFloor(25-gfunc.craftw.cHeight/2)
+
 function gfunc.craftw.draw()
 local x, y = gfunc.craftw.x, gfunc.craftw.y
 buffer.square(x, y, gfunc.craftw.w, gfunc.craftw.h, 0x9B9B9B)
@@ -2114,7 +2509,7 @@ buffer.text(x+1,y+3,0xC2C2C2,"Наименование")
 buffer.text(x+65,y+3,0xC2C2C2,"Шанс создания")
 buffer.text(x+130,y+3,0xC2C2C2,"Цена")
 buffer.text(x+gfunc.craftw.w-9,y,0xffffff,"Закрыть")
-buffer.text(x+1,y+2,0xffffff,"Монеты "..cCoins)
+buffer.text(x+1,y+2,0xffffff,"Монеты "..CGD[pID]["cash"])
 local t1, hclr
  for f = 1, #gfunc.craftw.loaded do
  t1 = unicode.sub(gfunc.craftw.loaded[f]["s_name"],1,25)
@@ -2135,7 +2530,7 @@ local t1, hclr
  buffer.text(x+130,y+4+f*2-1,0xffffff,tostring(gfunc.craftw.loaded[gfunc.craftw.sect][f+4*gfunc.craftw.tScrl-4]["cost"])..gfunc.genitiveWordEnding(" монет",gfunc.craftw.loaded[gfunc.craftw.sect][f+4*gfunc.craftw.tScrl-4]["cost"]))
  end
  if gfunc.craftw.titem ~= 0 then
- local clr, smx, smy = 0xCCCCCC, mathFloor(80-gfunc.craftw.cWidth/2), mathFloor(25-gfunc.craftw.cHeight/2)
+ local clr, smx, smy = 0xCCCCCC, gfunc.craftw.twx, gfunc.craftw.twy
  buffer.square(smx, smy, gfunc.craftw.cWidth, gfunc.craftw.cHeight, 0x828282)
  gfunc.unicodeframe(smx, smy, gfunc.craftw.cWidth, gfunc.craftw.cHeight, 0x4c4c4c)
  buffer.square(smx-23, smy, 22, 12, 0x828282)
@@ -2147,7 +2542,7 @@ local t1, hclr
  buffer.square(smx+13, smy+3, #tostring(gfunc.craftw.titemcount)+4, 1, 0x616161)
  buffer.text(smx+13,smy+3, clr, "+ "..gfunc.craftw.titemcount.." -")
  local td
- if gfunc.craftw.titemcount*gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["cost"] <= cCoins then td = clr else td = 0xb71202 end
+ if gfunc.craftw.titemcount*gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["cost"] <= CGD[pID]["cash"] then td = clr else td = 0xb71202 end
  buffer.text(smx+1,smy+4, td, "Стоимость: "..tostring(gfunc.craftw.titemcount*gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["cost"])..gfunc.genitiveWordEnding(" монет",gfunc.craftw.titemcount*gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["cost"]))
  buffer.text(smx+1,smy+5, clr, "Шанс создания: "..gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["chance"].."%")
  buffer.text(smx+1,smy+6, clr, "Шанс улучшения: "..tostring(gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["achance"]).."%")
@@ -2165,27 +2560,103 @@ local t1, hclr
  end
 end
 
+gfunc.craftw.action["touch"] = function(ev)
+ if ev[5] == 0 and clicked(ev[3],ev[4],gfunc.craftw.x+gfunc.craftw.w-8,gfunc.craftw.y,gfunc.craftw.x+gfunc.craftw.w-1,gfunc.craftw.y) then
+ gfunc.craftw.titem = 0
+ gfunc.craftw.titemcount = 1
+ gfunc.craftw.sect = 1
+ gfunc.craftw.tScrl = 1
+ cWindowTrd = nil
+ cDialog = nil
+ paused = false
+ itemInfo = nil
+ end  
+   if gfunc.craftw.titem == 0 then
+    for c = 1, #gfunc.craftw.loaded do
+	 if ev[5] == 0 and clicked(ev[3],ev[4],2+c*26-26, 2, 2+c*25, 2) then
+	 gfunc.craftw.sect = c
+	 break
+	 end
+	end
+	for c = 1, mathMin(#gfunc.craftw.loaded[gfunc.craftw.sect], 24) do
+     if clicked(ev[3],ev[4],2,5+c*2-2,160,5+c*2) then
+	 gfunc.craftw.titem = c+4*gfunc.tradew.tScrl-4
+	 itemInfo = gfunc.getItemInfo(gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["item"])
+	 iconImageBuffer[1] = image.load(dir.."itempic/"..loadedItemIcons[gid[gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["item"]]["icon"]]..".pic") 
+	 break
+	 end
+    end
+   else
+    if ev[5] == 0 and gid[gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["item"]]["stackable"] and gfunc.craftw.titemcount < 100 and clicked(ev[3],ev[4],gfunc.craftw.twx+13, gfunc.craftw.twy+3,gfunc.craftw.twx+13, gfunc.craftw.twy+3) then
+    gfunc.craftw.titemcount = gfunc.craftw.titemcount + 1
+    elseif ev[5] == 0 and gfunc.craftw.titemcount > 1 and clicked(ev[3],ev[4],gfunc.craftw.twx+16+#tostring(gfunc.craftw.titemcount), gfunc.craftw.twy+3,gfunc.craftw.twx+16+#tostring(gfunc.craftw.titemcount), gfunc.craftw.twy+3) then
+    gfunc.craftw.titemcount = gfunc.craftw.titemcount - 1
+    end
+    if clicked(ev[3],ev[4],gfunc.craftw.twx,gfunc.craftw.twy+gfunc.craftw.cHeight,gfunc.craftw.twx+gfunc.craftw.cWidth,gfunc.craftw.twy+gfunc.craftw.cHeight+3) and CGD[pID]["cash"] >= gfunc.craftw.titemcount*gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["cost"] then
+	 -- нажатие на кнопку 'создать предмет'
+	 checkVar1 = true
+	 for i = 1, #gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["recipe"] do
+	  if checkItemInBag(gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["recipe"][i][1]) < gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["recipe"][i][2]*gfunc.craftw.titemcount then
+	  checkVar1 = false
+	  end
+	 end
+	if gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["cost"] > CGD[pID]["cash"] then checkVar1 = false end
+	 if checkVar1 then
+	  for d = 1, #gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["recipe"] do
+	   for i = 1, #CGD[pID]["inventory"]["bag"] do
+	    if CGD[pID]["inventory"]["bag"][i][1] == gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["recipe"][d][1] then
+	    CGD[pID]["inventory"]["bag"][i][2] = CGD[pID]["inventory"]["bag"][i][2] - gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["recipe"][d][2]*gfunc.craftw.titemcount
+	    if CGD[pID]["inventory"]["bag"][i][2] == 0 then CGD[pID]["inventory"]["bag"][i][1] = 0 end
+		break
+		end
+	   end
+	  end
+	 for d = 1, gfunc.craftw.titemcount do
+	  Citem = gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["item"]
+	  CGD[pID]["cash"] = CGD[pID]["cash"] - gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["cost"]
+       if Citem ~= nil and 10^10-gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["chance"]*10^10 <= gfunc.random(1,10^10) then
+       if 10^10-(gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["achance"] or 0)*10^10 <= gfunc.random(1,10^10) then Citem = createNewItem(Citem) end
+       addItem(Citem,1)
+	   end
+	  Citem = nil
+	  end
+	 gfunc.craftw.titem = 0
+	 gfunc.craftw.titemcount = 1	 
+	 iconImageBuffer = {}
+	 end
+	end
+	if clicked(ev[3],ev[4],gfunc.craftw.twx+gfunc.craftw.cWidth-2, gfunc.craftw.twy,gfunc.craftw.twx+gfunc.craftw.cWidth-2, gfunc.craftw.twy) then
+	gfunc.craftw.titem = 0
+	gfunc.craftw.titemcount = 1
+	iconImageBuffer = {}
+	end
+   end
+end
+
+-----------------------------Окно "YOU DEAD"------------------------------------------------------
+
 gfunc.ydw = {
 	w=40,
 	h=24,
+	action={},
 	[1]={
 		"Продолжить",
 		f=function()
-		local xpdec = mathFloor(mxp*gfunc.random(2*(10/math.sqrt(CGD[1]["lvl"]))*100,5*(10/math.sqrt(CGD[1]["lvl"]))*100)*0.0001)
-		 for f=1,#inventory["bag"] do
+		local xpdec = mathFloor(CGD[pID]["mxp"]*gfunc.random(2*(10/math.sqrt(CGD[pID]["lvl"]))*100,5*(10/math.sqrt(CGD[pID]["lvl"]))*100)*0.0001)
+		 for f=1,#CGD[pID]["inventory"]["bag"] do
 		  if gfunc.random(0,100) <= 1 then
-		  inventory["bag"][f][2] = 0
+		  CGD[pID]["inventory"]["bag"][f][2] = 0
 		  end
 		 end
 		gfunc.loadWorld(world[world.current].drespawn)
 		gfunc.teleport(world[world.current].drx)
 		gfunc.playerRV()
-		CGD[1]["chp"] = CGD[1]["mhp"]
-		cmp = mmp
-		 if cxp > xpdec then
-		 cxp = cxp - xpdec
+		CGD[pID]["chp"] = CGD[pID]["mhp"]
+		CGD[pID]["cmp"] = CGD[pID]["mmp"]
+		 if CGD[pID]["cxp"] > xpdec then
+		 CGD[pID]["cxp"] = CGD[pID]["cxp"] - xpdec
 		 end
-		CGD[1]["living"] = true
+		CGD[pID]["living"] = true
 		cWindowTrd = nil
 		paused = false
 		end
@@ -2208,32 +2679,71 @@ buffer.text(x+gfunc.ydw.w/2-unicode.len(ydwTitle)/2,y+1,0xFCFCFC,ydwTitle)
  end
 end
 
+gfunc.ydw.action["touch"] = function(ev)
+ for e = 1, #gfunc.ydw do
+  if clicked(ev[3],ev[4],160/2-gfunc.ydw.w/2,50/2-gfunc.ydw.h/2+2+e,160/2-gfunc.ydw.w/2+gfunc.ydw.w-1,50/2-gfunc.ydw.h/2+2+e) then
+  pcall(gfunc.ydw[e].f)
+  end
+ end
+end
+   
+-----------------------------Console window------------------------------------------------------
+
 local cCnsScroll = 1
 
-function gfunc.gameConsole(x,y)
-buffer.square(x, y, 60, 35, 0xABABAB)
-buffer.square(x, y, 60, 1, 0x525252)
-buffer.square(x+1, y+1, 58, 31, 0x1A1A1A)
-buffer.square(x+1, y+33, 58, 1, 0x1A1A1A)
+gfunc.gameConsole = {x=50,y=10,w=60,h=35,action={}}
+
+function gfunc.gameConsole.draw()
+local x, y, w, h = gfunc.gameConsole.x, gfunc.gameConsole.y, gfunc.gameConsole.w, gfunc.gameConsole.h
+buffer.square(x, y, w, h, 0xABABAB)
+buffer.square(x, y, w, 1, 0x525252)
+buffer.square(x+1, y+1, w-2, h-4, 0x1A1A1A)
+buffer.square(x+1, y+33, w-2, 1, 0x1A1A1A)
 local bColor, bSub
 local text1 = "debug"
-buffer.text(x+(mathMax(mathFloor((60 / 2) - (unicode.len(text1) / 2)), 0)), y, 0xffffff, text1)
+buffer.text(x+(mathMax(mathFloor((w / 2) - (unicode.len(text1) / 2)), 0)), y, 0xffffff, text1)
 buffer.text(x+59,y,0xffffff,"X")
- for f = 1, mathMin(#consDataR,28) do
-  if consDataR[f+(cCnsScroll*4-4)] then
-   if unicode.sub(consDataR[f+(cCnsScroll*4-4)],1,2) == "!/" then 
+ for f = 1, mathMin(#consoleArray,h-7) do
+  if consoleArray[f+(cCnsScroll*4-4)] then
+   if unicode.sub(consoleArray[f+(cCnsScroll*4-4)],1,2) == "!/" then 
    bColor = 0xFF0000
    bSub = 3
    else
    bColor = 0xffffff
    bSub = 1
    end
-  buffer.text(x+2,y+2+f,bColor,unicode.sub(consDataR[f+(cCnsScroll*4-4)],bSub,56))
+  buffer.text(x+2,y+2+f,bColor,unicode.sub(consoleArray[f+(cCnsScroll*4-4)],bSub,w-4))
   end
  end
 end
 
-gfunc.questsList = {x=30,y=12}
+gfunc.gameConsole.action["touch"] = function(ev)
+ if ev[5] == 0 and clicked(ev[3],ev[4],gfunc.gameConsole.x+gfunc.gameConsole.w-1,gfunc.gameConsole.y,gfunc.gameConsole.x+gfunc.gameConsole.w-1,gfunc.gameConsole.y) then
+ cWindowTrd = nil
+ paused = false
+ end
+end
+
+gfunc.gameConsole.action["scroll"] = function(ev)
+local x, y, w, h = gfunc.gameConsole.x, gfunc.gameConsole.y, gfunc.gameConsole.w, gfunc.gameConsole.h
+ if clicked(ev[3],ev[4],x,y,x+w-1,y+h-3) and ev[5] == 1 and cCnsScroll > 1 then
+ cCnsScroll = cCnsScroll - 1
+ elseif clicked(ev[3],ev[4],x,y,x+w-1,y+h-3) and ev[5] == -1 and mathCeil(cCnsScroll*4) < #consoleArray then
+ cCnsScroll = cCnsScroll + 1
+ end
+end
+
+gfunc.gameConsole.action["key_down"] = function(ev)
+ if not paused and ev[4] == 46 then
+ paused = true
+ cCnsScroll = mathFloor(#consoleArray/4)
+ cWindowTrd = "console"
+ end
+end
+
+-----------------------------Окно список заданий------------------------------------------------------
+
+gfunc.questsList = {x=30,y=12,w=100,h=30,action={}}
 
 function gfunc.questsList.draw()
 local x, y = gfunc.questsList.x, gfunc.questsList.y
@@ -2244,8 +2754,8 @@ buffer.text(x+92,y,0xffffff,"Закрыть")
 buffer.square(x+2, y+2, 29, 27, 0x7A7A7A)
 buffer.square(x+32, y+2, 66, 27, 0x7A7A7A)
  for f = 1, mathMin(#cUquests,25) do
- if cUquests[f][3] then buffer.text(x+3,y+3+f,0x00C222,"→") end
- buffer.text(x+3,y+3+f,0xDDDDDD,unicode.sub(gqd[cUquests[f][1]]["name"],1,28))
+ if cUquests[f][3] then buffer.text(x+2,y+2+f,0x00C222,"→") end
+ buffer.text(x+3,y+2+f,0xDDDDDD,unicode.sub(gqd[cUquests[f][1]]["name"],1,28))
  end
  if targetQuest > 0 and cUquests[targetQuest] ~= nil then
  local qDeskList = {}
@@ -2312,7 +2822,23 @@ buffer.square(x+32, y+2, 66, 27, 0x7A7A7A)
  end
 end
 
-gfunc.playerStats = {x=30,y=8,w=100,h=35,cPoints = {0,0,0,0}} -- не надо трогать этот массив, читеры!
+gfunc.questsList.action["touch"] = function(ev)
+ if ev[5] == 0 and clicked(ev[3],ev[4],122,gfunc.questsList.y,129,gfunc.questsList.y) then
+ cWindowTrd = "pause"
+ end
+ for f = 1, #cUquests do
+  if cUquests[f] ~= nil and clicked(ev[3],ev[4],gfunc.questsList.x+3,gfunc.questsList.y+2+f,gfunc.questsList.x+30,gfunc.questsList.y+2+f) then
+  someVar1 = false
+  targetQuest = f
+  break
+  end
+ if not someVar1 then targetQuest = 0 end
+ end
+end
+
+-----------------------------Окно инфо о п------------------------------------------------------
+
+gfunc.playerStats = {x=50,y=12,w=60,h=25,cPoints = {0,0,0,0},action={}}
 
 function gfunc.playerStats.draw()
 local x, y = gfunc.playerStats.x, gfunc.playerStats.y
@@ -2320,32 +2846,32 @@ buffer.square(x, y, gfunc.playerStats.w, gfunc.playerStats.h, 0xABABAB)
 buffer.square(x, y, gfunc.playerStats.w, 1, 0x525252)
 local someText = "Персонаж"
 buffer.text(x+(mathMax(gfunc.playerStats.w/2-(unicode.len(someText)/2),0)),y,0xffffff,someText)
-buffer.text(x+92,y,0xffffff,"Закрыть")
+buffer.text(x+gfunc.playerStats.w-8,y,0xffffff,"Закрыть")
 local info1 = {
-	"Имя персонажа: "..gud[CGD[1]["id"]]["name"],
-	"Уровень: "..CGD[1]["lvl"],
-	"Здоровье: "..tostring(mathFloor(CGD[1]["chp"]*10)/10).."/"..mathFloor(CGD[1]["mhp"]),
-	"Мана: "..tostring(mathFloor(cmp*10)/10).."/"..mathFloor(mmp),
-	"Опыт: "..cxp.."/"..mxp.." ("..tostring(mathFloor(cxp*100/mxp*10)/10).."%)",
-	"Физическая атака: "..CGD[1]["ptk"][1].."-"..CGD[1]["ptk"][2].." ("..mathCeil((vaddsPnts.vPdm1+vaddsPnts.vPdm2)/2).." от снаряжения)",
-	"Магическая атака: "..CGD[1]["mtk"][1].."-"..CGD[1]["mtk"][2].." ("..mathCeil((vaddsPnts.vMdm1+vaddsPnts.vMdm2)/2).." от снаряжения)",
-	"Физическая защита: "..CGD[1]["pdef"].." ("..CGD[1]["armorpdef"].." от снаряжения)",
-	"Магическая защита: "..CGD[1]["mdef"].." ("..CGD[1]["armormdef"].." от снаряжения)",
+	"Имя персонажа: "..gud[CGD[pID]["id"]]["name"],
+	"Уровень: "..CGD[pID]["lvl"],
+	"Здоровье: "..mathFloor(CGD[pID]["chp"]).."/"..mathFloor(CGD[pID]["mhp"]),
+	"Мана: "..mathFloor(CGD[pID]["cmp"]).."/"..mathFloor(CGD[pID]["mmp"]),
+	"Опыт: "..CGD[pID]["cxp"].."/"..CGD[pID]["mxp"].." ("..tostring(mathFloor(CGD[pID]["cxp"]*100/CGD[pID]["mxp"]*10)/10).."%)",
+	"Физическая атака: "..CGD[pID]["ptk"][1].."-"..CGD[pID]["ptk"][2].." ("..mathCeil((vaddsPnts.vPdm1+vaddsPnts.vPdm2)/2).." от снаряжения)",
+	"Магическая атака: "..CGD[pID]["mtk"][1].."-"..CGD[pID]["mtk"][2].." ("..mathCeil((vaddsPnts.vMdm1+vaddsPnts.vMdm2)/2).." от снаряжения)",
+	"Физическая защита: "..CGD[pID]["pdef"].." ("..CGD[pID]["armorpdef"].." от снаряжения)",
+	"Магическая защита: "..CGD[pID]["mdef"].." ("..CGD[pID]["armormdef"].." от снаряжения)",
 	"Скорость атаки: "..tostring(mathCeil((1/gsd[1]["reloading"])*10)/10),
-	"Вероятность нанесения критического удара: "..CGD[1]["criticalhc"].."%",
+	"Вероятность нанесения критического удара: "..CGD[pID]["criticalhc"].."%",
 }
  for f = 1, #info1 do
  buffer.text(x+3,y+1+f,0xffffff,info1[f])
  end
 gfunc.playerStats.x1, gfunc.playerStats.y1 = x+3, y+14 
 buffer.square(x+3, y+14, 37, 4, 0x898989)
-buffer.text(x+4,y+14,0xffffff,"Очков для распределения "..charPoints)
+buffer.text(x+4,y+14,0xffffff,"Очков для распределения "..CGD[pID]["levelpoints"])
 buffer.text(x+4,y+15,0xEEEEEE,"Магия")
-buffer.text(x+17,y+15,0xCECECE,tostring(intelligence+gfunc.playerStats.cPoints[1]+vaddsPnts.vInt))
+buffer.text(x+17,y+15,0xCECECE,tostring(CGD[pID]["intelligence"]+gfunc.playerStats.cPoints[1]+vaddsPnts.vInt))
 buffer.text(x+4,y+16,0xEEEEEE,"Сила")
-buffer.text(x+17,y+16,0xCECECE,tostring(strength+gfunc.playerStats.cPoints[2]+vaddsPnts.vStr))
+buffer.text(x+17,y+16,0xCECECE,tostring(CGD[pID]["strength"]+gfunc.playerStats.cPoints[2]+vaddsPnts.vStr))
 buffer.text(x+4,y+17,0xEEEEEE,"Выносливость")
-buffer.text(x+17,y+17,0xCECECE,tostring(survivability+gfunc.playerStats.cPoints[3]+vaddsPnts.vSur))
+buffer.text(x+17,y+17,0xCECECE,tostring(CGD[pID]["survivability"]+gfunc.playerStats.cPoints[3]+vaddsPnts.vSur))
  for f = 1, 3 do
  buffer.square(x+20, y+14+f, 3, 1, 0x727272)
  buffer.text(x+21,y+14+f,0xEEEEEE,"+")
@@ -2358,7 +2884,33 @@ buffer.text(x+17,y+17,0xCECECE,tostring(survivability+gfunc.playerStats.cPoints[
  buffer.text(x+28,y+17,0xEEEEEE,"×отменить")
 end
 
-local skillstr = {x=20,y=5,targ=0}
+gfunc.playerStats.action["touch"] = function(ev)
+if ev[5] == 0 and clicked(ev[3],ev[4],gfunc.playerStats.x+gfunc.playerStats.w-8,gfunc.playerStats.y,gfunc.playerStats.x+gfunc.playerStats.w-1,gfunc.playerStats.y) then cWindowTrd = "pause" end
+ for t = 1, 3 do
+  if ev[5] == 0 and CGD[pID]["levelpoints"] > 0 and clicked(ev[3],ev[4],gfunc.playerStats.x1+17,gfunc.playerStats.y1+t,gfunc.playerStats.x1+20,gfunc.playerStats.y1+t) then
+  gfunc.playerStats.cPoints[t] = gfunc.playerStats.cPoints[t] + 1
+  CGD[pID]["levelpoints"] = CGD[pID]["levelpoints"] - 1
+  gfunc.playerStats.cPoints[4] = gfunc.playerStats.cPoints[4] + 1
+  elseif ev[5] == 0 and CGD[pID]["levelpoints"] > 0 and clicked(ev[3],ev[4],gfunc.playerStats.x1+22,gfunc.playerStats.y1+t,gfunc.playerStats.x1+25,gfunc.playerStats.y1+t) and gfunc.playerStats.cPoints[t] > 0 then
+  gfunc.playerStats.cPoints[t] = gfunc.playerStats.cPoints[t] - 1
+  CGD[pID]["levelpoints"] = CGD[pID]["levelpoints"] + 1
+  gfunc.playerStats.cPoints[4] = gfunc.playerStats.cPoints[4] - 1	
+  end
+ end
+ if ev[5] == 0 and clicked(ev[3],ev[4],gfunc.playerStats.x1+28,gfunc.playerStats.y1+1,gfunc.playerStats.x1+34,gfunc.playerStats.y1+1) then
+ CGD[pID]["intelligence"] = CGD[pID]["intelligence"] + gfunc.playerStats.cPoints[1]
+ CGD[pID]["strength"] = CGD[pID]["strength"] + gfunc.playerStats.cPoints[2]
+ CGD[pID]["survivability"] = CGD[pID]["survivability"] + gfunc.playerStats.cPoints[3]
+ gfunc.playerStats.cPoints = {0,0,0,0}
+ gfunc.playerRV()
+ elseif ev[5] == 0 and gfunc.playerStats.cPoints[4] > 0 and clicked(ev[3],ev[4],gfunc.playerStats.x1+28,gfunc.playerStats.y1+3,gfunc.playerStats.x1+34,gfunc.playerStats.y1+3) then
+ CGD[pID]["levelpoints"] = CGD[pID]["levelpoints"] + gfunc.playerStats.cPoints[4]
+ gfunc.playerStats.cPoints = {0,0,0,0}
+ gfunc.playerRV()
+ end
+end
+
+-----------------------------Окно список умений------------------------------------------------------
 
 function gfunc.pSkillsPbar(x,y,number)
 buffer.square(x, y, 46, 4, 0x8c8c8c)
@@ -2378,7 +2930,7 @@ local stypes = {
 ["passive"] = "Пассивный",
 }
 
-gfunc.playerSkills = {x=20,y=5,w=120,h=40,targ=0}
+gfunc.playerSkills = {x=20,y=5,w=120,h=40,targ=0,action={}}
 
 function gfunc.playerSkills.draw()
 local x, y = gfunc.playerSkills.x, gfunc.playerSkills.y
@@ -2399,18 +2951,18 @@ buffer.square(x+53, y+2, 50, 37, 0x919191)
  if gfunc.playerSkills.targ ~= 0 then
  local slvl = mathMax(cPlayerSkills[gfunc.playerSkills.targ][3],1)
  blbl = gsd[cPlayerSkills[gfunc.playerSkills.targ][1]] 
-  if cPlayerSkills[gfunc.playerSkills.targ][3] < #blbl["manacost"] then
-   buffer.square(x+55, y+30, 46, 8, 0xA3A3A3)  
+  if ( blbl["type"] == "passive" and cPlayerSkills[gfunc.playerSkills.targ][3] < 7 ) or cPlayerSkills[gfunc.playerSkills.targ][3] < #blbl["manacost"] then
+   buffer.square(x+55, y+30, 46, 8, 0xA3A3A3)
    local buben = {
    {"Улучшение умения • следующий уровень "..cPlayerSkills[gfunc.playerSkills.targ][3]+1,0xEFEFEF}
    }
    if blbl["reqlvl"] then
    tableInsert(buben,{"Требуемый уровень: "..blbl["reqlvl"][cPlayerSkills[gfunc.playerSkills.targ][3]+1],0xEFEFEF})
-   if blbl["reqlvl"][cPlayerSkills[gfunc.playerSkills.targ][3]+1] > CGD[1]["lvl"] then buben[#buben][2] = 0xEE1414 end
+   if blbl["reqlvl"][cPlayerSkills[gfunc.playerSkills.targ][3]+1] > CGD[pID]["lvl"] then buben[#buben][2] = 0xEE1414 end
    end
    if blbl["reqcn"] then
    tableInsert(buben,{"Стоимость улучшения: "..blbl["reqcn"][cPlayerSkills[gfunc.playerSkills.targ][3]+1].." монет",0xEFEFEF})
-   if blbl["reqcn"][cPlayerSkills[gfunc.playerSkills.targ][3]+1] > cCoins then buben[#buben][2] = 0xEE1414 end
+   if blbl["reqcn"][cPlayerSkills[gfunc.playerSkills.targ][3]+1] > CGD[pID]["cash"] then buben[#buben][2] = 0xEE1414 end
    end
    if blbl["reqitem"] then
    tableInsert(buben,{"Требуемый предмет: "..gid[blbl["reqitem"][cPlayerSkills[gfunc.playerSkills.targ][3]+1][1]]["name"].."("..checkItemInBag(blbl["reqitem"][cPlayerSkills[gfunc.playerSkills.targ][3]+1][1]).."/"..blbl["reqitem"][cPlayerSkills[gfunc.playerSkills.targ][3]+1][2]..")",0xEFEFEF})
@@ -2456,7 +3008,7 @@ buffer.square(x+53, y+2, 50, 37, 0x919191)
    buffer.text(x+54,y+8,0xffffff,"Дальность: "..(blbl["distance"]+(vAttackDistance or 8)))
    end
   elseif slvl > 0 and blbl["type"] == "passive" then
-  
+  buffer.text(x+54,y+5,0xffffff,"Уровень умения: "..slvl.." / "..#blbl["value"])
   else
   buffer.text(x+54,y+5,0xCCCCCC,"Умение ещё не изучено")
   end
@@ -2486,6 +3038,63 @@ buffer.square(x+53, y+2, 50, 37, 0x919191)
   buffer.text(x+109,6+y+4*p-3,0xffffff,tostring(p+1))
   end
  end
+end
+
+gfunc.playerSkills.action["touch"] = function(ev)
+  if clicked(ev[3],ev[4],gfunc.playerSkills.x+112,gfunc.playerSkills.y,gfunc.playerSkills.x+119,gfunc.playerSkills.y) then cWindowTrd = "pause" end
+   for e = 1, #cPlayerSkills do
+    if ev[5] == 0 and clicked(ev[3],ev[4],gfunc.playerSkills.x+1, gfunc.playerSkills.y+2+e*3-3, gfunc.playerSkills.x+50, gfunc.playerSkills.y+2+e*3) then
+    gfunc.playerSkills.targ = e
+    end
+   end
+   if gfunc.playerSkills.targ > 0 then
+    if ev[5] == 0 and clicked(ev[3],ev[4],gfunc.playerSkills.x+70,gfunc.playerSkills.y+35,gfunc.playerSkills.x+84,gfunc.playerSkills.y+37) and ( ( gsd[cPlayerSkills[gfunc.playerSkills.targ][1]]["type"] == "passive" and cPlayerSkills[gfunc.playerSkills.targ][3] < 7 ) or cPlayerSkills[gfunc.playerSkills.targ][3] < #gsd[cPlayerSkills[gfunc.playerSkills.targ][1]]["manacost"] ) then
+    blbl, checkv1, checkv2 = gsd[cPlayerSkills[gfunc.playerSkills.targ][1]], true, {}
+	 if blbl["reqlvl"] then
+	  if blbl["reqlvl"][cPlayerSkills[gfunc.playerSkills.targ][3]+1] > CGD[pID]["lvl"] then 
+	  checkv1 = false 
+	  end	 
+	 end
+	 if blbl["reqcn"] then
+	  if blbl["reqcn"][cPlayerSkills[gfunc.playerSkills.targ][3]+1] > CGD[pID]["cash"] then 
+	  checkv1 = false 
+	  else
+	  checkv2.c = true
+	  end	 
+	 end
+	 if blbl["reqitem"] then
+	  if checkItemInBag(blbl["reqitem"][cPlayerSkills[gfunc.playerSkills.targ][3]+1][1]) < blbl["reqitem"][cPlayerSkills[gfunc.playerSkills.targ][3]+1][2] then
+	  checkv1 = false 
+	  else
+	  checkv2.o, checkv2.i = checkItemInBag(blbl["reqitem"][cPlayerSkills[gfunc.playerSkills.targ][3]+1][1])
+	  end	 
+	 end
+	 if checkv1 == true then
+	  if checkv2.c then CGD[pID]["cash"] = CGD[pID]["cash"] - blbl["reqcn"][cPlayerSkills[gfunc.playerSkills.targ][3]+1] end
+	  if checkv2.i then
+	   for y = 1, #CGD[pID]["inventory"]["bag"] do
+	    if CGD[pID]["inventory"]["bag"][y][1] == checkv2.i and CGD[pID]["inventory"]["bag"][y][2] >= checkv2.o then
+		CGD[pID]["inventory"]["bag"][y][2] = CGD[pID]["inventory"]["bag"][y][2] - blbl["reqitem"][cPlayerSkills[gfunc.playerSkills.targ][3]+1][2]
+		break
+		end
+	   end
+	  end
+	 cPlayerSkills[gfunc.playerSkills.targ][3] = cPlayerSkills[gfunc.playerSkills.targ][3] + 1
+	 end
+	blbl, checkv1, checkv2 = nil, nil, nil
+	end
+	blbl = false
+    for p = 1, #cUskills do
+	 if ev[5] == 0 and cPlayerSkills[gfunc.playerSkills.targ][1] > 1 and clicked(ev[3],ev[4],gfunc.playerSkills.x+105,gfunc.playerSkills.y+6+4*p-4,gfunc.playerSkills.x+115,gfunc.playerSkills.y+6+4*p-1) and cPlayerSkills[gfunc.playerSkills.targ][3] > 0 and gsd[cPlayerSkills[gfunc.playerSkills.targ][1]]["type"] ~= "passive" then
+	  for n = 1, #cUskills do
+	  if cUskills[n] == cPlayerSkills[gfunc.playerSkills.targ][1] then cUskills[n] = 0 end
+      end
+	 cUskills[p+1] = cPlayerSkills[gfunc.playerSkills.targ][1]
+	 blbl = true
+	 break
+	 end
+	end
+   end
 end
 
 function gfunc.spawnSingleUnit(id,x,y)
@@ -2533,7 +3142,7 @@ local function dAfterkill(d,x)
    for i = 1, #d[f] - 1 do
    gqd[d[f][i+1]]["comp"] = true
 	for e = 1, #cUquests do
-	if cUquests[#cUquests-e+1][1] == d[f][i+1] then table.remove(cUquests,#cUquests-e+1) end
+	if cUquests[#cUquests-e+1][1] == d[f][i+1] then tableRemove(cUquests,#cUquests-e+1) end
 	end   
    end
   end
@@ -2572,7 +3181,7 @@ end
 -- наносить урон по мобам
 function gfunc.makeDamage(id, damage)
 local chchance, eeee = 1, nil
-if gfunc.random(1,100) <= CGD[1]["criticalhc"] then chchance = 2; damage = damage * 2 end
+if gfunc.random(1,100) <= CGD[pID]["criticalhc"] then chchance = 2; damage = damage * 2 end
  -- не упал
  if CGD[id]["chp"] > damage then
  CGD[id]["attPlayer"] = true
@@ -2648,7 +3257,7 @@ bce.bColorEffect(1,85,38)
 end
 
 function gfunc.playerGetDamage(fromID,tipedm,dmplus)
- if CGD[fromID]["x"] > CGD[1]["x"] then
+ if CGD[fromID]["x"] > CGD[pID]["x"] then
  CGD[fromID]["spos"] = "l"
  else
  CGD[fromID]["spos"] = "r"
@@ -2659,45 +3268,50 @@ function gfunc.playerGetDamage(fromID,tipedm,dmplus)
  pckTarget = 0
  pickingUp = false
  pckTime, maxPckTime = 0, 0
- CGD[1]["cmove"] = true
- CGD[1]["image"] = 0
+ CGD[pID]["cmove"] = true
+ CGD[pID]["image"] = 0
  end
  --
-local atck, dmgRedu = gfunc.random(CGD[fromID]["ptk"][1]*10,CGD[fromID]["ptk"][2]*10)/10, CGD[1]["pdef"]/(CGD[1]["pdef"]+CGD[fromID]["lvl"]*30)
+local atck, dmgRedu = gfunc.random(CGD[fromID]["ptk"][1]*10,CGD[fromID]["ptk"][2]*10)/10, CGD[pID]["pdef"]/(CGD[pID]["pdef"]+CGD[fromID]["lvl"]*30)
  if tipedm == "m" then
  atck = gfunc.random(CGD[fromID]["mtk"][1]*10,CGD[fromID]["mtk"][2]*10)/10
- dmgRedu = CGD[1]["mdef"]/(CGD[1]["mdef"]+CGD[fromID]["lvl"]*30)
+ dmgRedu = CGD[pID]["mdef"]/(CGD[pID]["mdef"]+CGD[fromID]["lvl"]*30)
  end
 local damage = mathMax(mathFloor(mathMax((atck+dmplus)*(1-dmgRedu),0)),1)
 if cTarget == 0 then cTarget = fromID end
- if damage < CGD[1]["chp"] then
- CGD[1]["chp"] = CGD[1]["chp"] - damage
- CGD[1]["rage"] = 10
- gfunc.console.debug(unicode.sub(gud[CGD[fromID]["id"]]["name"],1,15),"нанёс",tostring(damage):sub(1,10).."ед. урона ("..tipedm..")")
+ if damage < CGD[pID]["chp"] then
+ CGD[pID]["chp"] = CGD[pID]["chp"] - damage
+ CGD[pID]["rage"] = 10
+ gfunc.textmsg5("Урон " .. damage)
+ gfunc.console.debug(unicode.sub(gud[CGD[fromID]["id"]]["name"],1,20),"нанёс",tostring(damage):sub(1,10).."ед. урона ("..tipedm..")")
  else
- CGD[1]["living"] = false
+ CGD[pID]["living"] = false
  end
 return damage
 end
 
 function gfunc.enemySkill(enemy,sl,lvl)
- if CGD[enemy]["living"] and gfunc.getDistanceToId(1,enemy) <= 60 and CGD[enemy]["attPlayer"] == true and CGD[enemy]["ctck"] then
+ if eusd[sl]["type"] == 1 and CGD[enemy]["living"] and gfunc.getDistanceToId(pID,enemy) <= 60 and CGD[enemy]["attPlayer"] == true and CGD[enemy]["ctck"] then
+  -- attack skill
   local dist = gud[CGD[enemy]["id"]]["atds"]+eusd[sl]["distance"]
-  if gfunc.getDistanceToId(1,enemy) > dist then
-   if CGD[enemy]["x"] > CGD[1]["x"] then
+  if gfunc.getDistanceToId(pID,enemy) > dist then
+   if CGD[enemy]["x"] > CGD[pID]["x"] then
    CGD[enemy]["spos"] = "l"
-   CGD[enemy]["mx"] = CGD[1]["x"]+CGD[1]["width"]+dist
+   CGD[enemy]["mx"] = CGD[pID]["x"]+CGD[pID]["width"]+dist
    else
    CGD[enemy]["spos"] = "r"
-   CGD[enemy]["mx"] = CGD[1]["x"]-dist
+   CGD[enemy]["mx"] = CGD[pID]["x"]-dist
    end
   else
   CGD[enemy]["mx"] = CGD[enemy]["x"]
   gfunc.playerGetDamage(enemy,eusd[sl]["typedm"],gfunc.random(eusd[sl]["damageinc"][lvl][1],eusd[sl]["damageinc"][lvl][2]))
    if eusd[sl]["eff"] then
-   gfunc.addUnitEffect(1,eusd[sl]["eff"][1],eusd[sl]["eff"][2])
+   gfunc.addUnitEffect(pID,eusd[sl]["eff"][1],eusd[sl]["eff"][2])
    end
   end
+ elseif eusd[sl]["type"] == 2 and CGD[enemy]["living"] and CGD[enemy]["attPlayer"] == true then
+  -- buff skill
+  gfunc.addUnitEffect(enemy,eusd[sl]["eff"][1],eusd[sl]["eff"][2])
  end
 end
 
@@ -2706,58 +3320,80 @@ local cskill = cPlayerSkills[cUskills[skill]][1]
 local lvl = cPlayerSkills[cUskills[skill]][3]
 local damage = 0
  if gsd[cskill]["type"] == "attack" and CGD[cTarget]["rtype"] ~= "p" and CGD[cTarget]["rtype"] ~= "f" and CGD[cTarget]["rtype"] ~= "r" and CGD[cTarget]["rtype"] ~= "c" then
-  if CGD[cTarget]["x"] > CGD[1]["x"] then
-  CGD[1]["spos"] = "r"
+  if CGD[cTarget]["x"] > CGD[pID]["x"] then
+  CGD[pID]["spos"] = "r"
   else
-  CGD[1]["spos"] = "l"
+  CGD[pID]["spos"] = "l"
   end
  local weaponDmg
    if gsd[cskill]["typedm"] == "p" then
-   damage = damage + gfunc.random(CGD[1]["ptk"][1]*10,CGD[1]["ptk"][2]*10)/10
+   damage = damage + gfunc.random(CGD[pID]["ptk"][1]*10,CGD[pID]["ptk"][2]*10)/10
    weaponDmg = gfunc.random(vaddsPnts.vPdm1,vaddsPnts.vPdm2)
    elseif gsd[cskill]["typedm"] == "m" then
-   damage = damage + gfunc.random(CGD[1]["mtk"][1]*10,CGD[1]["mtk"][2]*10)/10
+   damage = damage + gfunc.random(CGD[pID]["mtk"][1]*10,CGD[pID]["mtk"][2]*10)/10
    weaponDmg = gfunc.random(vaddsPnts.vMdm1,vaddsPnts.vMdm2)
    end  
    if type(gsd[cskill]["basedmgmlt"]) == "table" then damage = damage + damage*gsd[cskill]["basedmgmlt"][lvl]*0.01 
    elseif type(gsd[cskill]["basedmgmlt"]) == "number" then damage = damage + damage*gsd[cskill]["basedmgmlt"]*0.01 
    end  
-   if gsd[cskill]["weapondmgmlt"] and inventory["weared"]["weapon"] > 0 then damage = damage + weaponDmg*gsd[cskill]["weapondmgmlt"][lvl]*0.01 end
+   if gsd[cskill]["weapondmgmlt"] and CGD[pID]["inventory"]["weared"]["weapon"] > 0 then damage = damage + weaponDmg*gsd[cskill]["weapondmgmlt"][lvl]*0.01 end
    if gsd[cskill]["bseatckinc"] then damage = damage + damage*gsd[cskill]["bseatckinc"][lvl]*0.01 end
    if gsd[cskill]["value"] then damage = damage + gsd[cskill]["value"][lvl] end
   if gsd[cskill]["typedm"] == "p" then
-  damage = mathMax(damage*(1-CGD[cTarget]["pdef"]/(CGD[cTarget]["pdef"]+CGD[1]["lvl"]*30)),0.1)
+  damage = mathMax(damage*(1-CGD[cTarget]["pdef"]/(CGD[cTarget]["pdef"]+CGD[pID]["lvl"]*30)),0.1)
   elseif gsd[cskill]["typedm"] == "m" then
-  damage = mathMax(damage*(1-CGD[cTarget]["mdef"]/(CGD[cTarget]["mdef"]+CGD[1]["lvl"]*30)),0.1)
+  damage = mathMax(damage*(1-CGD[cTarget]["mdef"]/(CGD[cTarget]["mdef"]+CGD[pID]["lvl"]*30)),0.1)
   end
-  if cmp >= gsd[cskill]["manacost"][lvl] and cPlayerSkills[cUskills[skill]][2] == 0 and gfunc.getDistanceToId(1,cTarget) <= vAttackDistance+gsd[cskill]["distance"] then
-  cmp = cmp - gsd[cskill]["manacost"][lvl]
+  if CGD[pID]["cmp"] >= gsd[cskill]["manacost"][lvl] and cPlayerSkills[cUskills[skill]][2] == 0 and gfunc.getDistanceToId(pID,cTarget) <= vAttackDistance+gsd[cskill]["distance"] then
+  CGD[pID]["cmp"] = CGD[pID]["cmp"] - gsd[cskill]["manacost"][lvl]
   damage = mathMax(damage,1)
   gfunc.makeDamage(cTarget, mathFloor(damage))
-  CGD[1]["image"] = -4
+  cPlayerSkills[cUskills[1]][2] = gsd[1]["reloading"]*10
+  CGD[pID]["image"] = -4
   pimg4t = 0
   if cTarget ~= 0 and gsd[cskill]["eff"] ~= nil then gfunc.addUnitEffect(cTarget,gsd[cskill]["eff"],cPlayerSkills[cUskills[skill]][3]) end
   cPlayerSkills[cUskills[skill]][2] = gsd[cskill]["reloading"]*10
   vtskillUsingMsg = 3
   skillUsingMsg[1] = gsd[cskill]["name"]
   end
- CGD[1]["rage"] = 10
- elseif gsd[cskill]["type"] == "buff" and cmp >= gsd[cskill]["manacost"][lvl] and cPlayerSkills[cUskills[skill]][2] == 0 then
- cmp = cmp - gsd[cskill]["manacost"][lvl]
+ CGD[pID]["rage"] = 10
+ elseif gsd[cskill]["type"] == "buff" and CGD[pID]["cmp"] >= gsd[cskill]["manacost"][lvl] and cPlayerSkills[cUskills[skill]][2] == 0 then
+ CGD[pID]["cmp"] = CGD[pID]["cmp"] - gsd[cskill]["manacost"][lvl]
  cPlayerSkills[cUskills[skill]][2] = gsd[cskill]["reloading"]*10
- if gsd[cskill]["eff"] ~= nil then gfunc.addUnitEffect(1,gsd[cskill]["eff"],lvl) end
+ if gsd[cskill]["eff"] ~= nil then gfunc.addUnitEffect(pID,gsd[cskill]["eff"],lvl) end
  skillUsingMsg[1] = gsd[cskill]["name"]
  end
 end
 
-function gfunc.pickUpResource()
-pckTarget = cTarget
+function gfunc.pickUpResource(id)
+pckTarget = id
 pickingUp = true
-local mpcktime = gfunc.random(gud[CGD[cTarget]["id"]]["mnprs"]*10,gud[CGD[cTarget]["id"]]["mxprs"]*10)
+local mpcktime = gfunc.random(gud[CGD[pckTarget]["id"]]["mnprs"]*10,gud[CGD[pckTarget]["id"]]["mxprs"]*10)
 pckTime, maxPckTime = mpcktime, mpcktime
-CGD[1]["cmove"] = false
-CGD[1]["image"] = -1
-CGD[1]["mx"] = CGD[1]["x"]
+CGD[pID]["cmove"] = false
+CGD[pID]["image"] = -1
+CGD[pID]["mx"] = CGD[pID]["x"]
+end
+
+function gfunc.gatheringAction(id)
+ if gud[CGD[id]["id"]]["reqquest"] then
+  for m = 1, #cUquests do
+   if cUquests[m][1] == gud[CGD[id]["id"]]["reqquest"] and cUquests[m][3] ~= true then
+   gfunc.pickUpResource(id)
+   end
+  end
+ else
+ gfunc.pickUpResource(id)
+ end
+end
+
+local function getClose(cpID, cid, distance)
+ if CGD[cpID]["x"] > mathFloor(CGD[cid]["x"]) + CGD[cid]["width"] then
+ CGD[cpID]["mx"] = mathFloor(CGD[cid]["x"]) + CGD[cid]["width"] + gfunc.roundupnum(distance)
+ elseif CGD[cpID]["x"] + CGD[cpID]["width"] < mathFloor(CGD[cid]["x"]) then
+ CGD[cpID]["mx"] = mathCeil(CGD[cid]["x"]) - CGD[cpID]["width"] - gfunc.roundupnum(distance)
+ end
+gfunc.usepmx = true
 end
 
 function gfunc.getRawCount(array)
@@ -2821,7 +3457,7 @@ gfunc.weaponImg = {
 
 function gfunc.GetQuestReward(q)
 addXP(gqd[q]["qreward"]["xp"])
-cCoins = cCoins + gqd[q]["qreward"]["coins"]
+CGD[pID]["cash"] = CGD[pID]["cash"] + gqd[q]["qreward"]["coins"]
  if gqd[q]["qreward"]["item"] then
   for u = 1, #gqd[q]["qreward"]["item"] do
   addItem(gqd[q]["qreward"]["item"][u][1],gqd[q]["qreward"]["item"][u][2])
@@ -2838,18 +3474,18 @@ local function dmain()
   world[world.current].draw()
   else
   buffer.square(1,1,160,50,0x000000)
-  end 
+  end
  -- player
-	if CGD[1]["spos"] == "r" then 
-	buffer.image(pSprPicPos, 34, imageBuffer[CGD[1]["image"]],true)
+	if CGD[pID]["spos"] == "r" then 
+	buffer.image(pSprPicPos, 48-CGD[pID]["height"], imageBuffer[CGD[pID]["image"]],true)
 	--buffer.image(pSprPicPos+7,40,gfunc.weaponImg["sword"])
 	else 
-	buffer.image(pSprPicPos, 34, image.flipHorizontal(image.duplicate(imageBuffer[CGD[1]["image"]])),true)
+	buffer.image(pSprPicPos, 48-CGD[pID]["height"], image.flipHorizontal(image.duplicate(imageBuffer[CGD[pID]["image"]])),true)
 	end 
  -- other units
  gfunc.drawAllCGDUnits()
   if cWindowTrd ~= "screen_save" then
-   if CGD[1]["living"] then
+   if CGD[pID]["living"] then
     if cWindowTrd ~= "pause" then
     gfunc.playerInfoPanel.draw()
     end
@@ -2871,18 +3507,27 @@ local function dmain()
    buffer.text(2,14,0xACACAC,sMSG4[#sMSG4-1])
    buffer.text(2,15,0xBCBCBC,sMSG4[#sMSG4])
    end
+   if #sMSG5 > 0 then
+    for n = 1, 3 do
+	 if sMSG5[n] then
+	 buffer.text(pSprPicPos,47-CGD[pID]["height"]-2-n,0xBCBCBC,sMSG5[n])
+	 end
+	end
+   smsg5time = smsg5time - 1
+   if smsg5time <= 0 then table.remove(sMSG5,1) end
+   end
   end
  end
-	if cWindowTrd == "pause" then gfunc.fPause() 
+	if cWindowTrd == "pause" then gfunc.pauseMenu.draw() 
 	elseif cWindowTrd == "inventory" then  gfunc.inventory.draw()
 	elseif cWindowTrd == "dialog" then gfunc.npcDialog.draw()
 	elseif cWindowTrd == "spdialog" then gfunc.specialDialog.draw()
 	elseif cWindowTrd == "quests" then gfunc.questsList.draw()
-	elseif cWindowTrd == "console" then gfunc.gameConsole(50,10)
+	elseif cWindowTrd == "console" then gfunc.gameConsole.draw()
 	elseif cWindowTrd == "pstats" then gfunc.playerStats.draw()
 	elseif cWindowTrd == "tradewindow" then gfunc.tradew.draw()
 	elseif cWindowTrd == "craftwindow" then gfunc.craftw.draw()
-	elseif not CGD[1]["living"] then gfunc.ydw.draw()
+	elseif not CGD[pID]["living"] then gfunc.ydw.draw()
 	elseif cWindowTrd == "skillsWindow" then gfunc.playerSkills.draw()
 	end
  if debugMode then
@@ -2898,8 +3543,7 @@ end
 
 function gfunc.mCheck()
 if computer.totalMemory() >= 2*1024^2 then return true end
-if computer.freeMemory() < 8192 then return false end
-return true
+if computer.freeMemory() < 2^14 then return false end
 end
 
 local EmptyArmorSlotsList = {
@@ -2921,19 +3565,19 @@ iconImageBuffer[0]={}
   iconImageBuffer[0][EmptyArmorSlotsList[il][1]] = image.load(dir..EmptyArmorSlotsList[il][2])
   end
  end
- for f = 1, #inventory["bag"] do
-  if inventory["bag"][f][1] ~= 0 and inventory["bag"][f][2] ~= 0 and gid[inventory["bag"][f][1]] and gfunc.mCheck() then
-  iconImageBuffer[f] = image.load(dir.."itempic/"..loadedItemIcons[gid[inventory["bag"][f][1]]["icon"]]..".pic")
+ for f = 1, #CGD[pID]["inventory"]["bag"] do
+  if CGD[pID]["inventory"]["bag"][f][1] ~= 0 and CGD[pID]["inventory"]["bag"][f][2] ~= 0 and gid[CGD[pID]["inventory"]["bag"][f][1]] and gfunc.mCheck() then
+  iconImageBuffer[f] = image.load(dir.."itempic/"..loadedItemIcons[gid[CGD[pID]["inventory"]["bag"][f][1]]["icon"]]..".pic")
   end
  end
  for f = 1, #wItemTypes do
-  if inventory["weared"][wItemTypes[f]] ~= 0 and gfunc.mCheck() then 
-  iconImageBuffer[wItemTypes[f]] = image.load(dir.."itempic/"..loadedItemIcons[gid[inventory["weared"][wItemTypes[f]]]["icon"]]..".pic")
+  if CGD[pID]["inventory"]["weared"][wItemTypes[f]] ~= 0 and gfunc.mCheck() then 
+  iconImageBuffer[wItemTypes[f]] = image.load(dir.."itempic/"..loadedItemIcons[gid[CGD[pID]["inventory"]["weared"][wItemTypes[f]]]["icon"]]..".pic")
   end
  end
 end
 
-gfunc.fPauseMenuAction = {
+gfunc.pauseMenuMenuAction = {
 [1]=function()
 cWindowTrd = nil 
 paused = false
@@ -2961,13 +3605,38 @@ ingame = false
 end,
 }
 
-gfunc.addUnit(1,1,1)
-CGD[1]["rage"] = 0
+gfunc.addUnit(pID,1,1)
+
+CGD[pID]["inventory"] = {
+["weared"] = {
+["helmet"] = 0,
+["pendant"] = 0,
+["armor"] = 0,
+["robe"] = 0,
+["pants"] = 0,
+["weapon"] = 7,
+["footwear"] = 0,
+["ring"] = 0},
+["bag"] = {}
+}
+for f = 1, 20 do CGD[pID]["inventory"]["bag"][f] = {0,0} end
+
+CGD[pID]["levelpoints"] = gud[1]["lvl"]-1
+CGD[pID]["survivability"] = gud[1]["survivability"]
+CGD[pID]["strength"] = gud[1]["strength"]
+CGD[pID]["intelligence"] = gud[1]["intelligence"]
+CGD[pID]["rage"] = 0
+CGD[pID]["cmp"] = 0
+CGD[pID]["mmp"] = 0
+CGD[pID]["cxp"] = 0
+CGD[pID]["mxp"] = 0
+CGD[pID]["cash"] = 0
+CGD[pID]["cint"] = nil
 gfunc.loadWorld(world.current)
 gfunc.playerRV()
 gfunc.maxXP()
-CGD[1]["chp"] = CGD[1]["mhp"]
-cmp = mmp
+CGD[pID]["chp"] = CGD[pID]["mhp"]
+CGD[pID]["cmp"] = CGD[pID]["mmp"]
 dmain()
 
 local uMoveRef = 1
@@ -2983,15 +3652,15 @@ local deltan = 0
   deltan = os.clock()
   gfunc.playerRV()
   -- вещи не достойные внимания ниже
-  if cTarget ~= 0 and gfunc.getDistanceToId(1,cTarget) > 99 then cTarget = 0; showTargetInfo = false end
+  if cTarget ~= 0 and gfunc.getDistanceToId(pID,cTarget) > 99 then cTarget = 0; showTargetInfo = false end
   uMoveRef = uMoveRef - 1
   if vtskillUsingMsg > 0 then vtskillUsingMsg = vtskillUsingMsg - 1 end
   regMultiplier = 1
-  if CGD[1]["rage"] > 0 then
+  if CGD[pID]["rage"] > 0 then
   regMultiplier = 0.1
-  CGD[1]["rage"] = CGD[1]["rage"] - 1
+  CGD[pID]["rage"] = CGD[pID]["rage"] - 1
   end
-  -- чтобы квесты на предметы работали
+  -- кв на предметы
   for f = 1, #cUquests do
    if gqd[cUquests[f][1]]["type"] == "f" then
    cUquests[f][3] = false
@@ -3008,31 +3677,31 @@ local deltan = 0
     end
    end
   end
-  -- чтобы квесты сами выполнялись
+  -- автоматическое завершение кв
   for f = 1, #cUquests do
   if gqd[cUquests[f][1]]["type"] == "t" and cUquests[f][3] == false then cUquests[f][3] = true end
   end
-  -- какие-то множители
- manaReg = mathMin(0.75+(CGD[1]["lvl"]-1)*0.22)*regMultiplier
- healthReg = mathMin(0.75+(CGD[1]["lvl"]-1)*0.15)*regMultiplier
+  -- восстановдение маны, здоровья в сек.
+ manaReg = mathMin(0.75+(CGD[pID]["lvl"]-1)*0.22)*regMultiplier
+ healthReg = mathMin(0.75+(CGD[pID]["lvl"]-1)*0.15)*regMultiplier
 
-   if CGD[1]["living"] then
+   if CGD[pID]["living"] then
     -- восстановление маны персонажа
-	if cmp < mmp - manaReg then
-    cmp = cmp + manaReg
+	if CGD[pID]["cmp"] < CGD[pID]["mmp"] - manaReg then
+    CGD[pID]["cmp"] = CGD[pID]["cmp"] + manaReg
 	else
-	cmp = mmp
+	CGD[pID]["cmp"] = CGD[pID]["mmp"]
     end
     -- восстановление здоровья персонажа
-    if CGD[1]["chp"] < CGD[1]["mhp"] - healthReg then
-    CGD[1]["chp"] = CGD[1]["chp"] + healthReg
+    if CGD[pID]["chp"] < CGD[pID]["mhp"] - healthReg then
+    CGD[pID]["chp"] = CGD[pID]["chp"] + healthReg
     else
-	CGD[1]["chp"] = CGD[1]["mhp"]
+	CGD[pID]["chp"] = CGD[pID]["mhp"]
 	end
    end
 
    for f = 2, #CGD do
-    -- произвольное восстановление хп на 5%/сек.
+    -- произвольное восстановление жс на 5%/сек.
 	if not CGD[f]["attPlayer"] and CGD[f]["living"] then
 	 if CGD[f]["chp"]+mathCeil(CGD[f]["mhp"]*0.05)<CGD[f]["mhp"] then 
 	 CGD[f]["chp"]=CGD[f]["chp"]+mathCeil(CGD[f]["mhp"]*0.05)
@@ -3049,9 +3718,9 @@ local deltan = 0
 	CGD[f]["living"] = true
 	end
 	-- рандомное движение мобов
-	if gfunc.getDistanceToId(1,f) <= 384 and CGD[f]["rtype"] == "e" and CGD[f]["living"] and gfunc.random(1,3) == 3 and uMoveRef == 0 then
+	if gfunc.getDistanceToId(pID,f) <= 384 and CGD[f]["rtype"] == "e" and CGD[f]["living"] and gfunc.random(1,3) == 3 and uMoveRef == 0 then
 	CGD[f]["mx"] = CGD[f]["sx"] + gfunc.random(-8, 8)
-	end 
+	end
     -- моб подходит и бьёт игрока
 	 if CGD[f]["rtype"] == "e" then
 	  if gud[CGD[f]["id"]]["skill"] then
@@ -3068,12 +3737,12 @@ local deltan = 0
 	 gfunc.enemySkill(f,qwert[1],qwert[2])
 	 end
 	qwert = nil
-	if CGD[f]["living"] and CGD[f]["attPlayer"] == true and gfunc.getDistanceToId(1,f) > 60  then
+	if CGD[f]["living"] and CGD[f]["attPlayer"] == true and gfunc.getDistanceToId(pID,f) > 60  then
 	CGD[f]["attPlayer"] = false
 	CGD[f]["mx"] = CGD[f]["sx"]
 	end
     -- агр мобов
-	if CGD[f]["living"] and gud[CGD[f]["id"]]["agr"] == true and gfunc.getDistanceToId(1,f) <= gud[CGD[f]["id"]]["atds"]*2 then
+	if CGD[f]["living"] and gud[CGD[f]["id"]]["agr"] == true and gfunc.getDistanceToId(pID,f) <= gud[CGD[f]["id"]]["atds"]*2 then
     CGD[f]["attPlayer"] = true
     end
 	-- самотаргет
@@ -3082,15 +3751,17 @@ local deltan = 0
 	-- надписи над головой
     for m = 1, #CGD[f]["tlinfo"] do
      if CGD[f]["tlinfo"][1] then
-	 table.remove(CGD[f]["tlinfo"],1)
+	 tableRemove(CGD[f]["tlinfo"],1)
 	 end
     end
    end
    -- обслуживание всех эффектов на всех объектах
    for f = 1, #CGD do
-    CGD[f]["cmove"] = true
-	CGD[f]["ctck"] = true
-	if f > 1 then gfunc.unitRV(f) end
+   CGD[f]["cmove"] = true
+   CGD[f]["ctck"] = true
+	if f > 1 then
+	gfunc.unitRV(f)
+	end
 	for eff = 1, #CGD[f]["effects"] do
 	 qwert = CGD[f]["effects"][#CGD[f]["effects"]-eff+1]
 	 if CGD[f]["living"] and qwert ~= nil then
@@ -3105,7 +3776,7 @@ local deltan = 0
 	   else CGD[f]["chp"] = CGD[f]["mhp"]
 	   end
 	  elseif efftype == "mpi" then
-	  cmp = mathMax(mathMin(cmp + value/duration,mmp),0)
+	  CGD[pID]["cmp"] = mathMax(mathMin(CGD[pID]["cmp"] + value/duration,CGD[pID]["mmp"]),0)
 	  elseif efftype == "hpi%" then
 	  CGD[f]["chp"] = mathMin(CGD[f]["chp"] + CGD[f]["mhp"]*value*0.01,CGD[f]["mhp"])
 	  elseif efftype == "hpd" then
@@ -3126,7 +3797,7 @@ local deltan = 0
 	    if vshowEffDescr == qwert[1] then
 		vshowEffDescr = 0
 		end
-	   table.remove(CGD[f]["effects"],#CGD[f]["effects"]-eff+1) 
+	   tableRemove(CGD[f]["effects"],#CGD[f]["effects"]-eff+1) 
 	   end
 	  end
 	 end
@@ -3144,23 +3815,23 @@ local deltan = 0
    end
   if uMoveRef <= 0 then uMoveRef = 8 end
 
-  setScreenNewPosition() -- отображает часть мира независимо от координат игрока
+  setScreenNewPosition() -- сдвиг камеры
   if sScreenTimer1 > 0 then sScreenTimer1 = sScreenTimer1 - 1 end
  
 	if lostItem and not gfunc.checkInventoryisFull() then -- дает предмет который не поместился в инвентарь
 	addItem(lostItem[1],lostItem[2])
 	lostItem = nil
 	end
-	-- амулетики
-   for f = 1, #inventory["bag"] do
-    if inventory["bag"][f][1] > 0 and gid[inventory["bag"][f][1]] and inventory["bag"][f][2] > 0 and CGD[1]["living"] and gid[inventory["bag"][f][1]]["type"] == "elementmul" then
-     if gid[inventory["bag"][f][1]]["subtype"] == "hp" and CGD[1]["chp"] <= CGD[1]["mhp"]*(gid[inventory["bag"][f][1]]["props"]["r"]*0.01) then
-	 CGD[1]["chp"] = mathMin(CGD[1]["chp"]+CGD[1]["mhp"]*0.01*gid[inventory["bag"][f][1]]["props"]["ics"],CGD[1]["mhp"])
-	 inventory["bag"][f][2] = inventory["bag"][f][2] - 1
+	-- автовосстановление жс, мэ
+   for f = 1, #CGD[pID]["inventory"]["bag"] do
+    if CGD[pID]["inventory"]["bag"][f][1] > 0 and gid[CGD[pID]["inventory"]["bag"][f][1]] and CGD[pID]["inventory"]["bag"][f][2] > 0 and CGD[pID]["living"] and gid[CGD[pID]["inventory"]["bag"][f][1]]["type"] == "elementmul" then
+     if gid[CGD[pID]["inventory"]["bag"][f][1]]["subtype"] == "hp" and CGD[pID]["chp"] <= CGD[pID]["mhp"]*(gid[CGD[pID]["inventory"]["bag"][f][1]]["props"]["r"]*0.01) then
+	 CGD[pID]["chp"] = mathMin(CGD[pID]["chp"]+CGD[pID]["mhp"]*0.01*gid[CGD[pID]["inventory"]["bag"][f][1]]["props"]["ics"],CGD[pID]["mhp"])
+	 CGD[pID]["inventory"]["bag"][f][2] = CGD[pID]["inventory"]["bag"][f][2] - 1
 	 break
-	 elseif gid[inventory["bag"][f][1]]["subtype"] == "mp" and cmp <= mmp*(gid[inventory["bag"][f][1]]["props"]["r"]*0.01) then
-	 cmp = mathMin(cmp+mmp*0.01*gid[inventory["bag"][f][1]]["props"]["ics"],mmp)
-	 inventory["bag"][f][2] = inventory["bag"][f][2] - 1
+	 elseif gid[CGD[pID]["inventory"]["bag"][f][1]]["subtype"] == "mp" and CGD[pID]["cmp"] <= CGD[pID]["mmp"]*(gid[CGD[pID]["inventory"]["bag"][f][1]]["props"]["r"]*0.01) then
+	 CGD[pID]["cmp"] = mathMin(CGD[pID]["cmp"]+CGD[pID]["mmp"]*0.01*gid[CGD[pID]["inventory"]["bag"][f][1]]["props"]["ics"],CGD[pID]["mmp"])
+	 CGD[pID]["inventory"]["bag"][f][2] = CGD[pID]["inventory"]["bag"][f][2] - 1
 	 break
 	 end
     end
@@ -3177,11 +3848,11 @@ local tblpbl
   if not paused then
    for f = 2, #CGD do
     -- мобы бегают быстрее
-	if CGD[f]["living"] and gfunc.getDistanceToId(1,f) <= 256 and CGD[f]["x"] ~= CGD[f]["mx"] and not gud[CGD[f]["id"]]["cmve"] and CGD[f]["cmove"] then
+	if CGD[f]["living"] and gfunc.getDistanceToId(pID,f) <= 256 and CGD[f]["x"] ~= CGD[f]["mx"] and not gud[CGD[f]["id"]]["cmve"] and CGD[f]["cmove"] then
 	tblpbl = 0.25
 	 if CGD[f]["attPlayer"] then 
 	 tblpbl = 0.5 
-	 if gfunc.getDistanceToId(1,f) >= gud[CGD[f]["id"]]["atds"]*2 then tblpbl = 1 end
+	 if gfunc.getDistanceToId(pID,f) >= gud[CGD[f]["id"]]["atds"]*2 then tblpbl = 1 end
 	 end	
 	movetoward(f, CGD[f]["mx"], 100, tblpbl)
 	end
@@ -3201,13 +3872,13 @@ local deltan
  deltan = os.clock()
   if dec == 0 then -- 1/10 сек
 	if pickingUp then
-	CGD[1]["mx"] = CGD[1]["x"]
+	CGD[pID]["mx"] = CGD[pID]["x"]
 	pckTime = pckTime - 1
-	if CGD[1]["image"] ~= -1 then CGD[1]["image"] = -1 end
+	if CGD[pID]["image"] ~= -1 then CGD[pID]["image"] = -1 end
 	end
 	-- копание тут
 	if pickingUp and pckTime == 0 then
-	CGD[1]["image"] = 0
+	CGD[pID]["image"] = 0
 	pickingUp = false
 	itemLootarray = getRandSeq(gud[CGD[pckTarget]["id"]]["items"])
  	for item = 1, #itemLootarray do
@@ -3221,51 +3892,69 @@ local deltan
 	 end
     addXP(gud[CGD[pckTarget]["id"]]["exp"])
     addCoins(gud[CGD[pckTarget]["id"]]["coins"])
-    CGD[1]["cmove"] = true
+    CGD[pID]["cmove"] = true
     CGD[pckTarget]["living"] = false
     CGD[pckTarget]["resptime"] = gud[CGD[pckTarget]["id"]]["vresp"]
     if pckTarget == cTarget then cTarget = 0 end
     end
-	-- умениям нужно перезаряжаться!
+	-- умения перезаряжаются
    for f = 1, #cUskills do
-    if cUskills[f] > 0 and cPlayerSkills[cUskills[f]][1] > 0 and cPlayerSkills[cUskills[f]][2] > 0 then
-    cPlayerSkills[cUskills[f]][2] = cPlayerSkills[cUskills[f]][2] - 1
-    end
+	if cUskills[f] > 0 and cPlayerSkills[cUskills[f]][1] > 0 and cPlayerSkills[cUskills[f]][2] > 0 then
+	cPlayerSkills[cUskills[f]][2] = mathMax(cPlayerSkills[cUskills[f]][2] - 1, 0)
+	end
    end
-	-- хз что это
-   if #consDataR >= 10 then table.remove(consDataR,1) end
-   if CGD[1]["image"] == -4 then
+   
+   if CGD[pID]["cint"] ~= nil then
+	if CGD[pID]["cint"][1] == 1 and gfunc.getDistanceToId(pID,CGD[pID]["cint"][2]) <= CGD[pID]["cint"][3] then
+	gfunc.gatheringAction(CGD[pID]["cint"][2])
+	CGD[pID]["cint"] = nil
+	elseif CGD[pID]["cint"][1] == 2 and gfunc.getDistanceToId(pID,CGD[pID]["cint"][2]) <= CGD[pID]["cint"][3] then
+	 if cPlayerSkills[cUskills[1]] and not pickingUp then
+	  if CGD[CGD[pID]["cint"][2]]["living"] then
+	  gfunc.usepmx = false
+      gfunc.useSkill(CGD[pID]["cint"][4] or 1)
+	  if CGD[pID]["cint"][4] then tableRemove(CGD[pID]["cint"],4) end
+	  else
+	  CGD[pID]["cint"] = nil
+	  end
+	 end
+	end
+   end
+   
+	-- что это такое?
+   if CGD[pID]["image"] == -4 then
     if pimg4t >= 2 then
-    CGD[1]["image"] = 0
+    CGD[pID]["image"] = 0
 	pimg4t = 0
 	end
 	pimg4t = pimg4t + 1
    end
   end
-  if dec == 0 or dec == 1 then -- 1/20 сек.
+  if dec > -1 then -- 1/20 сек.
 	-- это работает при ctrl + стрелки или ctrl + A/D
-   if gfunc.usepmx and CGD[1]["x"] ~= CGD[1]["mx"] then
-   gfunc.playerAutoMove(mathFloor(CGD[1]["mx"]), 9999, 3)
+   if gfunc.usepmx and CGD[pID]["x"] ~= CGD[pID]["mx"] then
+   gfunc.playerAutoMove(mathFloor(CGD[pID]["mx"]), 9999, 3)
+   else gfunc.usepmx = false
    end
    gfunc.pmovlck = false
-   if CGD[1]["x"] <= world[world.current].limitL and pmov < 0 then 
+   if CGD[pID]["x"] <= world[world.current].limitL and pmov < 0 then 
    gfunc.pmovlck = true
-   CGD[1]["image"] = 0
-   elseif CGD[1]["x"] >= world[world.current].limitR and pmov > 0 then 
+   CGD[pID]["image"] = 0
+   elseif CGD[pID]["x"] >= world[world.current].limitR and pmov > 0 then 
    gfunc.pmovlck = true
-   CGD[1]["image"] = 0
+   CGD[pID]["image"] = 0
    end
 	-- ходьба и её отстойная анимация
-   if not pickingUp and not gfunc.pmovlck and pmov ~= 0 and CGD[1]["cmove"] then
-    CGD[1]["x"] = CGD[1]["x"] + pmov
+   if not pickingUp and not gfunc.pmovlck and pmov ~= 0 and CGD[pID]["cmove"] then
+    CGD[pID]["x"] = CGD[pID]["x"] + pmov
     cGlobalx = cGlobalx + pmov
     cBackgroundPos = cBackgroundPos + pmov
     if gfunc.cim <= 3 then
-    CGD[1]["image"] = -3
+    CGD[pID]["image"] = -3
     elseif gfunc.cim > 3 and gfunc.cim <= 6 then
-    CGD[1]["image"] = 0
+    CGD[pID]["image"] = 0
     else
-    CGD[1]["image"] = -2
+    CGD[pID]["image"] = -2
     end
    if gfunc.cim > 9 then gfunc.cim = 1 end
    gfunc.cim = gfunc.cim + 1  
@@ -3302,48 +3991,47 @@ local ev, vseffdescrig, pItem, mpcktime, checkVar1, tpskp, formula, Citem, blbl,
  if ev[1] == "key_down" then
   if ev[4] == 44 then ingame = false end
   
-  if (ev[4] == 205 or ev[4] == 32) and not paused and CGD[1]["x"] <= world[world.current].limitR and CGD[1]["cmove"] and CGD[1]["cmove"] then -- вправо
+  if (ev[4] == 205 or ev[4] == 32) and not paused and CGD[pID]["x"] <= world[world.current].limitR and CGD[pID]["cmove"] and CGD[pID]["cmove"] then -- вправо
+   CGD[pID]["cint"] = nil
    gfunc.usepmx = false
    if keyboard.isAltDown() then
-   CGD[1]["mx"] = world[world.current].limitR
+   CGD[pID]["mx"] = world[world.current].limitR
    gfunc.usepmx = true  
    else
    pmov = 3
-   CGD[1]["spos"] = "r"
+   CGD[pID]["spos"] = "r"
    gfunc.keyactionmove = true
    end
-  elseif (ev[4] == 203 or ev[4] == 30) and not paused and CGD[1]["x"] >= world[world.current].limitL and CGD[1]["cmove"] and CGD[1]["cmove"] then -- влево
+  elseif (ev[4] == 203 or ev[4] == 30) and not paused and CGD[pID]["x"] >= world[world.current].limitL and CGD[pID]["cmove"] and CGD[pID]["cmove"] then -- влево
+   CGD[pID]["cint"] = nil
    gfunc.usepmx = false
    if keyboard.isAltDown() then
-   CGD[1]["mx"] = world[world.current].limitL
+   CGD[pID]["mx"] = world[world.current].limitL
    gfunc.usepmx = true
    else
    pmov = -3
-   CGD[1]["spos"] = "l"
+   CGD[pID]["spos"] = "l"
    gfunc.keyactionmove = true
    end
   end
   if not paused and ev[4] >= 2 and ev[4] <= 7 then
    for f = 1, 6 do
-	if ev[4] == f + 1 and cTarget ~= 0 and cUskills[f] ~= 0 and cPlayerSkills[cUskills[f]][1] ~= 0 and cPlayerSkills[cUskills[f]][3] > 0 then
+	if ev[4] == f + 1 and cTarget ~= 0 and cUskills[f] > 0 and cPlayerSkills[cUskills[f]] and cPlayerSkills[cUskills[f]][3] > 0 and not pickingUp then
 	 if gsd[cPlayerSkills[cUskills[f]][1]]["type"] == "attack" then
 	  vAttackDistance = vAttackDistance or 8
-	  gfunc.console.debug(gfunc.getDistanceToId(1,cTarget))
-	  if gfunc.getDistanceToId(1,cTarget) > gfunc.getPlayerAtdsBySkill(f) then
-	   if CGD[1]["x"] > mathFloor(CGD[cTarget]["x"]) + CGD[cTarget]["width"] then
-	   CGD[1]["mx"] = mathFloor(CGD[cTarget]["x"]) + CGD[cTarget]["width"] + gfunc.roundupnum(gfunc.getPlayerAtdsBySkill(f))
-	   elseif CGD[1]["x"] + CGD[1]["width"] < mathFloor(CGD[cTarget]["x"]) then
-	   CGD[1]["mx"] = mathCeil(CGD[cTarget]["x"]) - CGD[1]["width"] - gfunc.roundupnum(gfunc.getPlayerAtdsBySkill(f))
-	   end
-	  gfunc.usepmx = true
-	  elseif gfunc.getDistanceToId(1,cTarget) <= gfunc.getPlayerAtdsBySkill(f) then
+	  if gfunc.getDistanceToId(pID,cTarget) > gfunc.getPlayerAtdsBySkill(f) then
+	  CGD[pID]["cint"] = {2,cTarget,gfunc.getPlayerAtdsBySkill(f),f}
+	  getClose(pID, cTarget, gfunc.getPlayerAtdsBySkill(f))
+	  else
 	  gfunc.useSkill(f)
+	  CGD[pID]["cint"] = {2,cTarget,gfunc.getPlayerAtdsBySkill(f),f}
 	  pmov = 0
-	  CGD[1]["mx"] = CGD[1]["x"]
+	  CGD[pID]["mx"] = CGD[pID]["x"]
 	  break
 	  end
 	 elseif gsd[cPlayerSkills[cUskills[f]][1]]["type"] == "buff" then
 	 gfunc.useSkill(f)
+	 CGD[pID]["cint"] = nil
 	 pmov = 0
 	 break
 	 end
@@ -3353,8 +4041,8 @@ local ev, vseffdescrig, pItem, mpcktime, checkVar1, tpskp, formula, Citem, blbl,
   -- Нажатие клавиши 'E'
   if not paused and ev[4] == 18 and cTarget ~= 0 then
 	-- на нпс
-	if CGD[cTarget]["rtype"] == "f" and gfunc.getDistanceToId(1,cTarget) <= 40 then
-	CGD[1]["mx"] = CGD[1]["x"]
+	if CGD[cTarget]["rtype"] == "f" and gfunc.getDistanceToId(pID,cTarget) <= 40 then
+	CGD[pID]["mx"] = CGD[pID]["x"]
 	paused = true
 	cWindowTrd = "dialog"
 	gfunc.dialogsdata, gfunc.gddnum = io.open(dir.."data/dialogs.data","r"), 1
@@ -3370,18 +4058,15 @@ local ev, vseffdescrig, pItem, mpcktime, checkVar1, tpskp, formula, Citem, blbl,
 	cDialog["im"] = 0
 	cDialog = insertQuests(cTarget,cDialog)
 	-- на ресурс
-	elseif CGD[cTarget]["rtype"] == "r" and not pickingUp and gfunc.getDistanceToId(1,cTarget) <= 11 then
-	 if gud[CGD[cTarget]["id"]]["reqquest"] then
-	  for m = 1, #cUquests do
-	   if cUquests[m][1] == gud[CGD[cTarget]["id"]]["reqquest"] and cUquests[m][3] ~= true then
-	   gfunc.pickUpResource()
-	   end
-	  end
-     else
-     gfunc.pickUpResource()
-     end
+	elseif CGD[cTarget]["rtype"] == "r" and not pickingUp then
+	 if gfunc.getDistanceToId(pID,cTarget) <= 11 then
+	 gfunc.gatheringAction(cTarget)
+	 else
+	 CGD[pID]["cint"] = {1,cTarget,5}
+	 getClose(pID, cTarget, 5)
+	 end
 	-- на портал
-	elseif CGD[cTarget]["rtype"] == "c" and not pickingUp and gfunc.getDistanceToId(1,cTarget) <= 10 then
+	elseif CGD[cTarget]["rtype"] == "c" and not pickingUp and gfunc.getDistanceToId(pID,cTarget) <= 10 then
 	 if gud[CGD[cTarget]["id"]]["tlp"] == "r" then
 	 gfunc.loadWorld(world[world.current].drespawn)
 	 elseif type(gud[CGD[cTarget]["id"]]["tlp"]) == "table" then
@@ -3389,12 +4074,8 @@ local ev, vseffdescrig, pItem, mpcktime, checkVar1, tpskp, formula, Citem, blbl,
      end
 	end
   end
-  -- Нажатие клавиши 'C'
-  if not paused and ev[4] == 46 then
-  paused = true
-  cCnsScroll = mathFloor(#consDataR/4)
-  cWindowTrd = "console"
-  end
+  --
+  gfunc.gameConsole.action["key_down"](ev)
   -- Нажатие клавиши 'B'
   if cWindowTrd == nil and not paused and ev[4] == 48 then
   paused = true; gfunc.openInventory()
@@ -3404,56 +4085,72 @@ local ev, vseffdescrig, pItem, mpcktime, checkVar1, tpskp, formula, Citem, blbl,
   showItemData = false
   end
   if not paused and cWindowTrd == nil then   
-   for f = 1, #inventory["bag"] do
-	if inventory["bag"][f][1] > 0 and inventory["bag"][f][2] > 0 and gid[inventory["bag"][f][1]]["type"] == "potion" and CGD[1]["lvl"] >= gid[inventory["bag"][f][1]]["reqlvl"] then
+   for f = 1, #CGD[pID]["inventory"]["bag"] do
+	if CGD[pID]["inventory"]["bag"][f][1] > 0 and CGD[pID]["inventory"]["bag"][f][2] > 0 and gid[CGD[pID]["inventory"]["bag"][f][1]]["type"] == "potion" and CGD[pID]["lvl"] >= gid[CGD[pID]["inventory"]["bag"][f][1]]["reqlvl"] then
 	 -- Нажатие клавиши 'T'
-	 if ev[4] == 20 and gid[inventory["bag"][f][1]]["subtype"] == "health" then
-	 gfunc.addUnitEffect(1,1,gid[inventory["bag"][f][1]]["lvl"])
-	 inventory["bag"][f][2] = inventory["bag"][f][2] - 1
+	 if ev[4] == 20 and gid[CGD[pID]["inventory"]["bag"][f][1]]["subtype"] == "health" then
+	 gfunc.addUnitEffect(pID,1,gid[CGD[pID]["inventory"]["bag"][f][1]]["lvl"])
+	 CGD[pID]["inventory"]["bag"][f][2] = CGD[pID]["inventory"]["bag"][f][2] - 1
 	 break
 	 -- Нажатие клавиши 'Y'
-	 elseif ev[4] == 21 and gid[inventory["bag"][f][1]]["subtype"] == "mana" then
-	 gfunc.addUnitEffect(1,2,gid[inventory["bag"][f][1]]["lvl"])
-	 inventory["bag"][f][2] = inventory["bag"][f][2] - 1
+	 elseif ev[4] == 21 and gid[CGD[pID]["inventory"]["bag"][f][1]]["subtype"] == "mana" then
+	 gfunc.addUnitEffect(pID,2,gid[CGD[pID]["inventory"]["bag"][f][1]]["lvl"])
+	 CGD[pID]["inventory"]["bag"][f][2] = CGD[pID]["inventory"]["bag"][f][2] - 1
 	 break	  
 	 end
 	end
    end
   end
-  
  end
  if ev[1] == "key_up" then
   if ( ev[4] == 205 or ev[4] == 32 or ev[4] == 203 or ev[4] == 30 ) and not keyboard.isAltDown()then
-  if not pickingUp then CGD[1]["image"] = 0 end
+  if not pickingUp then CGD[pID]["image"] = 0 end
   gfunc.usepmx = false
   pmov = 0
   end
  end
  if ev[1] == "touch" then
+  
+  --кнопка эксп
   if cWindowTrd == nil and not paused then
-   if clicked(ev[3],ev[4],1,4,25,4) then
+   if clicked(ev[3],ev[4],gfunc.playerInfoPanel.x,gfunc.playerInfoPanel.y+3,gfunc.playerInfoPanel.x+gfunc.playerInfoPanel.w-1,gfunc.playerInfoPanel.y+3) then
    svxpbar = true
    else
    svxpbar = false
    end
   end
- if cWindowTrd == nil and ev[5] == 0 and cTarget ~= 0 and gud[CGD[cTarget]["id"]]["rtype"] ~= "r" and gud[CGD[cTarget]["id"]]["rtype"] ~= "f" and clicked(ev[3],ev[4],60,5,71,5) then showTargetInfo = true 
- elseif cWindowTrd == nil and cTarget ~= 0 and ev[5] == 0 and not clicked(ev[3],ev[4],60,5,71,5) then showTargetInfo = false end
- if ev[5] == 0 and clicked(ev[3],ev[4],1,1,25,5) and cWindowTrd == nil and not paused then cTarget = 1 end
-  if ev[5] == 0 and clicked(ev[3],ev[4],156,2,158,3) and cWindowTrd == nil then
+  
+  --кнопка ифно о цели
+  if cWindowTrd == nil and ev[5] == 0 and cTarget ~= 0 and gud[CGD[cTarget]["id"]]["rtype"] ~= "r" and gud[CGD[cTarget]["id"]]["rtype"] ~= "f" and clicked(ev[3],ev[4],60,5,71,5) then
+  showTargetInfo = true
+  elseif cWindowTrd == nil and cTarget ~= 0 and ev[5] == 0 and not clicked(ev[3],ev[4],60,5,71,5) then 
+  showTargetInfo = false
+  end
+  
+  --выделить себя
+  if ev[5] == 0 and not paused and clicked(ev[3],ev[4],gfunc.playerInfoPanel.x,gfunc.playerInfoPanel.y,gfunc.playerInfoPanel.x+gfunc.playerInfoPanel.w-1,gfunc.playerInfoPanel.y+gfunc.playerInfoPanel.h-1) and cWindowTrd == nil then 
+  cTarget = pID 
+  end
+  
+  --кнопка пауза
+  if ev[5] == 0 and cWindowTrd == nil and clicked(ev[3],ev[4],gfunc.pauseMenu.buttonX,gfunc.pauseMenu.buttonY,gfunc.pauseMenu.buttonX+2,gfunc.pauseMenu.buttonY+1) then
   cWindowTrd = "pause"
   paused = true
-  elseif ev[5] == 0 and clicked(ev[3],ev[4],156,2,158,3) and cWindowTrd == "pause" then 
+  elseif ev[5] == 0 and cWindowTrd == "pause" and clicked(ev[3],ev[4],gfunc.pauseMenu.buttonX,gfunc.pauseMenu.buttonY,gfunc.pauseMenu.buttonX+2,gfunc.pauseMenu.buttonY+1) then 
   cWindowTrd = nil 
   paused = false
   end
   
-  if ev[5] == 0 and not paused and not clicked(ev[3],ev[4],1,1,160,8) then target(ev[3],ev[4]) end
+  --выбрать цель
+  if ev[5] == 0 and not paused and not clicked(ev[3],ev[4],1,1,mxw,8) then 
+  target(ev[3],ev[4])
+  end
   
+  --кликабельные иконки эф
   if ev[5] == 0 and not paused then
    vseffdescrig = false
-   for f = 1, #CGD[1]["effects"] do
-    if clicked(ev[3],ev[4],f*4-3,7,f*4,8) then
+   for f = 1, #CGD[pID]["effects"] do
+    if clicked(ev[3],ev[4],gfunc.playerInfoPanel.x+f*4-4,gfunc.playerInfoPanel.y+gfunc.playerInfoPanel.h+1,gfunc.playerInfoPanel.x-1+f*4,gfunc.playerInfoPanel.y+gfunc.playerInfoPanel.h+2) then
 	vshowEffDescr, sEffdx, sEffdy = f, ev[3], ev[4]+1
 	vseffdescrig = true
 	break
@@ -3461,532 +4158,32 @@ local ev, vseffdescrig, pItem, mpcktime, checkVar1, tpskp, formula, Citem, blbl,
    end
   if not vseffdescrig then vshowEffDescr = 0 end
   end
+  
   if ev[5] == 0 and cWindowTrd == "pause" then
-   for f = 1, #fPauselist do
-    if clicked(ev[3],ev[4],1,4+f*4-3,30,3+f*4) then
-	gfunc.fPauseMenuAction[f]()
-	ev[3], ev[4] = 0, 0
-	break
-	end
-   end
+  gfunc.pauseMenu.action["touch"](ev)
   elseif cWindowTrd == "inventory" then
-   if clicked(ev[3],ev[4],152,1,159,1) then
-   cWindowTrd = "pause"
-   iconImageBuffer = {}
-   end
-   -- кнопка выбросить предмет
-   if showItemData and invcTargetItem ~= 0 and clicked(ev[3],ev[4],2,47,16,47) then
-   -- чистка памяти при утрате предмета
-   if inventory["bag"][invcTargetItem][1] >= cItemRange then gid[inventory["bag"][invcTargetItem][1]] = nil end
-   -- пустая ячейка в инв.
-   inventory["bag"][invcTargetItem] = {0,0}
-   -- чистка ячейки буфера
-   iconImageBuffer[invcTargetItem] = nil
-   -- скрыть описание
-   showItemData, invcTargetItem, itemInfo = false, 0, nil
-   end
-  local fbParam = true
-  local nwitemuwr, xps, yps
-   for f = 1, 4 do
-    for i = 1, 5 do
-    xps, yps = 2+i*21-21, 3+f*11-11
-    formula = (f-1)*5+i
-	 if inventory["bag"][formula][1] ~= 0 and inventory["bag"][formula][2] ~= 0 then
-      if clicked(ev[3],ev[4],xps,yps,xps+19,yps+9) then
-	  pItem = gid[inventory["bag"][formula][1]]
-	   if ev[5] == 0 then
-	   invcTItem = inventory["bag"][formula][1]
-	   invcTargetItem = formula
-	   invTItem = inventory["bag"][formula][2]
-	   itemInfo = gfunc.getItemInfo(inventory["bag"][formula][1])
-	   showItemData = true
-       invIdx, invIdy = ev[3], ev[4]
-	   fbParam = false
-	   break
-	   elseif ev[5] == 1 and gid[inventory["bag"][formula][1]] then
-	    -- armors
-		if pItem["type"] == "armors" and CGD[1]["lvl"] >= pItem["reqlvl"] then
-		 if inventory["weared"][pItem["subtype"]] == 0 then
-	     inventory["weared"][pItem["subtype"]] = inventory["bag"][formula][1]
-		 iconImageBuffer[pItem["subtype"]] = image.load(dir.."itempic/"..loadedItemIcons[gid[inventory["bag"][formula][1]]["icon"]]..".pic")
-		 inventory["bag"][formula][1] = 0
-		 inventory["bag"][formula][2] = 0
-		  if iconImageBuffer[formula] ~= nil then
-		  iconImageBuffer[formula] = nil
-		  end
-	     else
-		 nwitemuwr = inventory["weared"][pItem["subtype"]]
-		 inventory["weared"][pItem["subtype"]] = inventory["bag"][formula][1]
-		 iconImageBuffer[gid[nwitemuwr]["subtype"]] = image.load(dir.."itempic/"..loadedItemIcons[gid[inventory["bag"][formula][1]]["icon"]]..".pic")
-		 inventory["bag"][formula][1] = nwitemuwr
-		 inventory["bag"][formula][2] = 1
-		 iconImageBuffer[formula] = image.load(dir.."itempic/"..loadedItemIcons[gid[nwitemuwr]["icon"]]..".pic")
-		 end
-		-- weapon
-		elseif pItem["type"] == "weapon" and CGD[1]["lvl"] >= pItem["reqlvl"] then
-		 if inventory["weared"]["weapon"] == 0 then
-	     inventory["weared"]["weapon"] = inventory["bag"][formula][1]
-		 iconImageBuffer["weapon"] = image.load(dir.."itempic/"..loadedItemIcons[gid[inventory["bag"][formula][1]]["icon"]]..".pic")
-		 inventory["bag"][formula][1] = 0
-		 inventory["bag"][formula][2] = 0
-		  if iconImageBuffer[formula] ~= nil then
-		  iconImageBuffer[formula] = nil
-		  end		 
-		 else
-		 nwitemuwr = inventory["weared"]["weapon"]
-		 inventory["weared"]["weapon"] = inventory["bag"][formula][1]
-		 iconImageBuffer["weapon"] = image.load(dir.."itempic/"..loadedItemIcons[gid[inventory["bag"][formula][1]]["icon"]]..".pic")
-		 inventory["bag"][formula][1] = nwitemuwr
-		 inventory["bag"][formula][2] = 1
-		 iconImageBuffer[formula] = image.load(dir.."itempic/"..loadedItemIcons[gid[nwitemuwr]["icon"]]..".pic")
-		 end
-		-- potion
-		elseif pItem["type"] == "chest" then
-		 for t = 1, #pItem["props"] do
-		  if 10^3-pItem["props"][t][3]*10 <= gfunc.random(1,10^3) then
-		  addItem(pItem["props"][t][1],pItem["props"][t][2])
-		  break
-		  end
-		 end
-        gfunc.textmsg3("Использован предмет "..pItem["name"])
-		inventory["bag"][formula][2] = inventory["bag"][formula][2] - 1
-		elseif pItem["type"] == "tlp" then
-		CGD[1]["x"], cGlobalx, cBackgroundPos = 1, 1, 1
-		gfunc.textmsg3("Использован предмет "..pItem["name"])
-		inventory["bag"][formula][2] = inventory["bag"][formula][2]	- 1	
-		elseif pItem["type"] == "potion" and CGD[1]["lvl"] >= pItem["reqlvl"] then
-		 if pItem["subtype"] == "health" then
-		 gfunc.addUnitEffect(1,1,pItem["lvl"])
-		 inventory["bag"][formula][2] = inventory["bag"][formula][2] - 1
-		 elseif pItem["subtype"] == "mana" then
-		 gfunc.addUnitEffect(1,2,pItem["lvl"])
-		 inventory["bag"][formula][2] = inventory["bag"][formula][2] - 1
-		 end
-		gfunc.textmsg3("Использован предмет "..pItem["name"])
-		end
-	   nwitemuwr = nil
-	   break
-	   end
-	  end
-     end
-    formula = nil
-	end
-   end
-   for f = 1, 4 do
-    for i = 1, 2 do
-     formula, xps, yps = (f-1)*2+i, 107+i*21-21, 3+f*11-11
-	 if inventory["weared"][wItemTypes[formula]] ~= 0 then
-      if clicked(ev[3],ev[4],xps,yps,xps+19,yps+9) then
-	   if ev[5] == 0 then
-	   invcTItem = inventory["weared"][wItemTypes[formula]]
-	   invTItem = 1
-	   showItemData = true
-	   itemInfo = gfunc.getItemInfo(inventory["weared"][wItemTypes[formula]])
-       invIdx, invIdy = ev[3], ev[4]
-	   fbParam = false
-	   break
-	   else
-       nwitemuwr = addItem(inventory["weared"][wItemTypes[formula]],1)
-	   iconImageBuffer[nwitemuwr] = image.load(dir.."itempic/"..loadedItemIcons[gid[inventory["weared"][wItemTypes[formula]]]["icon"]]..".pic")
-	   inventory["weared"][wItemTypes[formula]] = 0
-	   	if iconImageBuffer[wItemTypes[formula]] ~= nil then
-		iconImageBuffer[wItemTypes[formula]] = nil
-		end	   
-	   nwitemuwr = nil
-	   end
-	  end
-	 end
-	 if inventory["weared"][wItemTypes[formula]] == 0 then
-	  if clicked(ev[3],ev[4],xps,yps,xps+19,yps+9) then
-	   if ev[5] == 0 then
-	   invcTItem = 1
-	   showItemData = true
-	   --itemInfo = gfunc.getItemInfo(inventory["weared"][wItemTypes[formula]])
-	   itemInfo = {{gfunc.getWItemTypeName(wItemTypes[formula]),0xFFFFFF}}
-       invIdx, invIdy = ev[3], ev[4]
-	   fbParam = false
-	   end
-	  end
-	 end
-    formula = nil
-	end
-   end
-   if fbParam then
-   invcTargetItem = 0
-   invTItem = 0
-   showItemData = false
-   invIdx, invIdy = 1, 1
-   end
- gfunc.playerRV()
- elseif cWindowTrd == "dialog" then
-   for f = 1, #cDialog do
-    if cDialog[f]["action"] == "getquest" and gqd[cDialog[f]["do"]]["comp"] == true then
-    table.remove(cDialog[f])
-    end
-   end
-   for f = 1, #cDialog do
-    if ev[5] == 0 and clicked(ev[3],ev[4],gfunc.npcDialog.x+2,gfunc.npcDialog.y+14+f,gfunc.npcDialog.x+gfunc.npcDialog.w-2,gfunc.npcDialog.y+14+f) then
-	 if cDialog[f]["action"] == "close" then
-	 cWindowTrd = nil
-	 cDialog = nil
-	 paused = false
-	 elseif cDialog[f]["action"] == "trade" then
-	 gfunc.tradew.loaded = loadfile(dir.."data/trade.data")(cDialog[f]["do"])
-	 gfunc.tradew.sect = 1
-	 cWindowTrd = "tradewindow"
-	 elseif cDialog[f]["action"] == "craft" then
-	 gfunc.craftw.loaded = loadfile(dir.."data/manufacturing.data")(cDialog[f]["do"])
-	 gfunc.craftw.sect = 1
-	 cWindowTrd = "craftwindow"
-	 elseif cDialog[f]["action"] == "dialog" then
-	 cDialog = cDialog[f]["do"]
-	 elseif cDialog[f]["action"] == "qdialog" and CGD[1]["lvl"] >= gqd[cDialog[f]["q"]]["minlvl"] then
-	 cDialog = cDialog[f]["do"]
-	 elseif cDialog[f]["action"] == "getquest" and gqd[cDialog[f]["do"]]["comp"] == 0 and CGD[1]["lvl"] >= gqd[cDialog[f]["do"]]["minlvl"] then
-	 getQuest(cDialog[f]["do"])
-	 gqd[cDialog[f]["do"]]["qstgve"] = CGD[cTarget]["id"]
-	 gqd[cDialog[f]["do"]]["comp"] = false
-	 cWindowTrd = nil
-	 cDialog = nil
-	 paused = false
-	 elseif cDialog[f]["action"] == "cmpquest" then
-	  for t = 1, #cUquests do
-	   if cUquests[t][1] == cDialog[f]["do"] and cUquests[t][3] then
-	    if gqd[cDialog[f]["do"]]["type"] == "f" then
-		 for l = 1, #gqd[cDialog[f]["do"]]["targ"] do
-		  for k = 1, #inventory["bag"] do
-		   if inventory["bag"][k][1] == gqd[cDialog[f]["do"]]["targ"][l][1] and inventory["bag"][k][2] >= gqd[cDialog[f]["do"]]["targ"][l][2] then
-		   inventory["bag"][k][2] = inventory["bag"][k][2] - gqd[cDialog[f]["do"]]["targ"][l][2]
-		   end
-		  end
-		 end
-		end
-	   -- *награда за задание*
-	    if gqd[cDialog[f]["do"]]["qreward"] then
-		 if type(gqd[cDialog[f]["do"]]["qreward"]["item"]) == "table" and #gqd[cDialog[f]["do"]]["qreward"]["item"] <= gfunc.checkInventorySpace() then
-		 gfunc.GetQuestReward(cDialog[f]["do"])	
-		 tenb = true
-		 elseif type(gqd[cDialog[f]["do"]]["qreward"]["item"]) == "table" and #gqd[cDialog[f]["do"]]["qreward"]["item"] > gfunc.checkInventorySpace() then
-		 gfunc.textmsg1("Необходимо "..#gqd[cDialog[f]["do"]]["qreward"]["item"].." ячеек в инвентаре")
-		 tenb = false
-		 end
-		 if gqd[cDialog[f]["do"]]["qreward"]["item"] == nil then tenb = true; gfunc.GetQuestReward(cDialog[f]["do"]) end
-		end
-		if tenb and not gqd[cDialog[f]["do"]]["fct"] then
-	     if not gqd[cDialog[f]["do"]]["repeat"] then
-		 gqd[cDialog[f]["do"]]["comp"] = true
-	     else
-		 gqd[cDialog[f]["do"]]["comp"] = 0
-		 end
-	    table.remove(cUquests,t)
-	    cWindowTrd = nil
-	    cDialog = nil
-	    paused = false
-	    break
-	    elseif tenb and gqd[cDialog[f]["do"]]["fct"] then
-		 if gqd[cDialog[f]["do"]]["fct"] == "setquest" then
-		  if not gqd[cDialog[f]["do"]]["repeat"] then
-		  gqd[cDialog[f]["do"]]["comp"] = true
-	      else
-		  gqd[cDialog[f]["do"]]["comp"] = 0
-		  end
-		  getQuest(gqd[cDialog[f]["do"]]["value"])
-		  gfunc.textmsg1("Задание '"..gqd[gqd[cDialog[f]["do"]]["value"]]["name"].."' получено") 
-		  gqd[gqd[cDialog[f]["do"]]["value"]]["qstgve"] = CGD[cTarget]["id"]
-		  gqd[gqd[cDialog[f]["do"]]["value"]]["comp"] = false
-		  table.remove(cUquests,t)
-	      cWindowTrd = nil
-	      cDialog = nil
-	      paused = false
-		  break
-		 end
-		end
-	   end
-	  end
-	 elseif cDialog[f]["action"] == "setWorld" and CGD[1]["lvl"] >= cDialog[f]["reqlvl"] then
-	 gfunc.teleport(cDialog[f]["do"][2] or 1,cDialog[f]["do"][1] or 1)
-	 end
-	end
-   end
-   if clicked(ev[3],ev[4],61,11,61,11) then
-   cWindowTrd = nil
-   cDialog = nil
-   paused = false   
-   end
+  gfunc.inventory.action["touch"](ev)
+  elseif cWindowTrd == "dialog" then
+  gfunc.npcDialog.action["touch"](ev)
   elseif cWindowTrd == "quests" then
-   if ev[5] == 0 and clicked(ev[3],ev[4],122,12,129,12) then
-   cWindowTrd = "pause"
-   end
-   for f = 1, #cUquests do
-    if cUquests[f] ~= nil and clicked(ev[3],ev[4],32,15+f,60,15+f) then
-	someVar1 = false
-	targetQuest = f
-	break
-	end
-   if not someVar1 then targetQuest = 0 end
-   end
+  gfunc.questsList.action["touch"](ev)
   elseif cWindowTrd == "console" then
-   if ev[5] == 0 and clicked(ev[3],ev[4],109,10,109,10) then
-   cWindowTrd = nil
-   paused = false
-   end
+  gfunc.gameConsole.action["touch"](ev)
   elseif cWindowTrd == "pstats" then
-  if ev[5] == 0 and clicked(ev[3],ev[4],122,8,129,8) then cWindowTrd = "pause" end
-   for t = 1, 3 do
-    if ev[5] == 0 and charPoints > 0 and clicked(ev[3],ev[4],gfunc.playerStats.x1+17,gfunc.playerStats.y1+t,gfunc.playerStats.x1+20,gfunc.playerStats.y1+t) then
-	gfunc.playerStats.cPoints[t] = gfunc.playerStats.cPoints[t] + 1
-	charPoints = charPoints - 1
-	gfunc.playerStats.cPoints[4] = gfunc.playerStats.cPoints[4] + 1
-	elseif ev[5] == 0 and charPoints > 0 and clicked(ev[3],ev[4],gfunc.playerStats.x1+22,gfunc.playerStats.y1+t,gfunc.playerStats.x1+25,gfunc.playerStats.y1+t) and gfunc.playerStats.cPoints[t] > 0 then
-	gfunc.playerStats.cPoints[t] = gfunc.playerStats.cPoints[t] - 1
-	charPoints = charPoints + 1
-	gfunc.playerStats.cPoints[4] = gfunc.playerStats.cPoints[4] - 1	
-	end
-   end
-   if ev[5] == 0 and clicked(ev[3],ev[4],gfunc.playerStats.x1+28,gfunc.playerStats.y1+1,gfunc.playerStats.x1+34,gfunc.playerStats.y1+1) then
-   intelligence = intelligence + gfunc.playerStats.cPoints[1]
-   strength = strength + gfunc.playerStats.cPoints[2]
-   survivability = survivability + gfunc.playerStats.cPoints[3]
-   gfunc.playerStats.cPoints = {0,0,0,0}
-   gfunc.playerRV()
-   elseif ev[5] == 0 and gfunc.playerStats.cPoints[4] > 0 and clicked(ev[3],ev[4],gfunc.playerStats.x1+28,gfunc.playerStats.y1+3,gfunc.playerStats.x1+34,gfunc.playerStats.y1+3) then
-   charPoints = charPoints + gfunc.playerStats.cPoints[4]
-   gfunc.playerStats.cPoints = {0,0,0,0}
-   gfunc.playerRV()
-   end
+  gfunc.playerStats.action["touch"](ev)
   elseif cWindowTrd == "tradewindow" then
-   if ev[5] == 0 and clicked(ev[3],ev[4],152,1,159,1) then
-	gfunc.tradew.titem = 0
-	gfunc.tradew.titemcount = 1
-	gfunc.tradew.sect = 1
-	gfunc.tradew.tScrl = 1
-	gfunc.tradew.torg = 1
-	gfunc.tradew.asmt = {}
-   cWindowTrd = nil
-   cDialog = nil
-   paused = false
-   itemInfo = nil
-   end
-    if ev[5] == 0 and gfunc.tradew.torg == 1 and gfunc.tradew.titem == 0 and clicked(ev[3],ev[4],119,2,136,4) then 
-	gfunc.tradew.torg = 2 
-	gfunc.tradew.titem = 0
-    elseif ev[5] == 0 and gfunc.tradew.torg == 2 and clicked(ev[3],ev[4],119,2,136,4) then
-	gfunc.tradew.torg = 1 
-	gfunc.tradew.titem = 0
-	gfunc.tradew.titemcount = 1
-    iconImageBuffer = {}
-	end
-   if gfunc.tradew.torg == 2 then
-    for f = 1, #gfunc.tradew.asmt do
-	 if ev[5] == 0 and clicked(ev[3],ev[4],2,5+f,85,5+f) then
-	 iconImageBuffer[1] = image.load(dir.."itempic/"..loadedItemIcons[gid[gfunc.tradew.asmt[f][1]]["icon"]]..".pic")
-	 itemInfo = gfunc.getItemInfo(gfunc.tradew.asmt[f][1])
-	 gfunc.tradew.titem = f
-	 gfunc.tradew.titemcount = 1
-	 end
-	end
-	if gfunc.tradew.titem > 0 then
-	 if ev[5] == 0 then
-	  if clicked(ev[3],ev[4],119,8,119,8) and gfunc.tradew.titemcount < gfunc.tradew.asmt[gfunc.tradew.titem][2] then
-	  gfunc.tradew.titemcount = gfunc.tradew.titemcount + 1
-	  elseif clicked(ev[3],ev[4],126,8,126,8) and gfunc.tradew.titemcount > 1 then
-	  gfunc.tradew.titemcount = gfunc.tradew.titemcount - 1
-	  elseif clicked(ev[3],ev[4],121,9,125,9) then
-	  gfunc.tradew.titemcount = gfunc.tradew.asmt[gfunc.tradew.titem][2]
-	  end
-	  if clicked(ev[3],ev[4],130,7,145,9) then
-	   for d = 1, #inventory["bag"] do
-		if inventory["bag"][d][1] == gfunc.tradew.asmt[gfunc.tradew.titem][1] then 
-		cCoins = cCoins + gfunc.tradew.titemcount*gid[gfunc.tradew.asmt[gfunc.tradew.titem][1]]["cost"]
-		inventory["bag"][d][2] = inventory["bag"][d][2] - gfunc.tradew.titemcount
-		for h = 1, #inventory["bag"] do if inventory["bag"][h][2] <= 0 then inventory["bag"][h][1] = 0 end end
-		iconImageBuffer = {}
-		gfunc.tradew.titem = 0
-		gfunc.tradew.titemcount = 1
-	    break
-		end
-	   end
-	  end
-	 end
-	end
-   elseif gfunc.tradew.torg == 1 and gfunc.tradew.titem == 0 then
-    for c = 1, #gfunc.tradew.loaded do
-	 if ev[5] == 0 and clicked(ev[3],ev[4],2+c*26-26, 2, 2+c*25, 2) then
-	 gfunc.tradew.sect = c
-	 break
-	 end
-	end
-	for c = 1, mathMin(#gfunc.tradew.loaded[gfunc.tradew.sect], 24) do
-     if clicked(ev[3],ev[4],2,5+c*2-2,160,5+c*2) then
-	 gfunc.tradew.titem = c+4*gfunc.tradew.tScrl-4
-	 itemInfo = gfunc.getItemInfo(gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["item"])
-	 iconImageBuffer = {[1]=image.load(dir.."itempic/"..loadedItemIcons[gid[gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["item"]]["icon"]]..".pic")}
-	 break
-	 end
-    end
-   elseif gfunc.tradew.torg == 1 and gfunc.tradew.titem > 0 then
-    if ev[5] == 0 and gid[gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["item"]]["stackable"] and gfunc.tradew.titemcount < 100 and clicked(ev[3],ev[4],mathFloor(80-gfunc.tradew.cWidth/2)+13, mathFloor(25-gfunc.tradew.cHeight/2)+3,mathFloor(80-gfunc.tradew.cWidth/2)+13, mathFloor(25-gfunc.tradew.cHeight/2)+3) then -- +
-    gfunc.tradew.titemcount = gfunc.tradew.titemcount + 1
-    elseif ev[5] == 0 and gfunc.tradew.titemcount > 1 and clicked(ev[3],ev[4],mathFloor(80-gfunc.tradew.cWidth/2)+16+#tostring(gfunc.tradew.titemcount), mathFloor(25-gfunc.tradew.cHeight/2)+3,mathFloor(80-gfunc.tradew.cWidth/2)+16+#tostring(gfunc.tradew.titemcount), mathFloor(25-gfunc.tradew.cHeight/2)+3) then -- -
-    gfunc.tradew.titemcount = gfunc.tradew.titemcount - 1
-    end
-    -- купить
-	if clicked(ev[3],ev[4],mathFloor(80-gfunc.tradew.cWidth/2),mathFloor(25-gfunc.tradew.cHeight/2)+gfunc.tradew.cHeight,mathFloor(80-gfunc.tradew.cWidth/2)+gfunc.tradew.cWidth,mathFloor(25-gfunc.tradew.cHeight/2)+gfunc.tradew.cHeight+3) and cCoins >= gfunc.tradew.titemcount*gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["cost"] then
-	cCoins = cCoins - gfunc.tradew.titemcount*gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["cost"]
-	addItem(gfunc.tradew.loaded[gfunc.tradew.sect][gfunc.tradew.titem]["item"],gfunc.tradew.titemcount)
-	gfunc.tradew.titem = 0
-	gfunc.tradew.titemcount = 1	
-	iconImageBuffer = {}
-	end
-	-- закрыть
-	if clicked(ev[3],ev[4],mathFloor(80-gfunc.tradew.cWidth/2)+gfunc.tradew.cWidth-2, mathFloor(25-gfunc.tradew.cHeight/2),mathFloor(80-gfunc.tradew.cWidth/2)+gfunc.tradew.cWidth-2, mathFloor(25-gfunc.tradew.cHeight/2)) then
-	gfunc.tradew.titem = 0
-	gfunc.tradew.titemcount = 1
-	iconImageBuffer = {}
-	end
-   end
+  gfunc.tradew.action["touch"](ev)
   elseif cWindowTrd == "craftwindow" then
-   if ev[5] == 0 and clicked(ev[3],ev[4],152,1,159,1) then
-	gfunc.craftw.titem = 0
-	gfunc.craftw.titemcount = 1
-	gfunc.craftw.sect = 1
-	gfunc.craftw.tScrl = 1
-	cWindowTrd = nil
-	cDialog = nil
-	paused = false
-	itemInfo = nil
-   end  
-   if gfunc.craftw.titem == 0 then
-    for c = 1, #gfunc.craftw.loaded do
-	 if ev[5] == 0 and clicked(ev[3],ev[4],2+c*26-26, 2, 2+c*25, 2) then
-	 gfunc.craftw.sect = c
-	 break
-	 end
-	end
-	for c = 1, mathMin(#gfunc.craftw.loaded[gfunc.craftw.sect], 24) do
-     if clicked(ev[3],ev[4],2,5+c*2-2,160,5+c*2) then
-	 gfunc.craftw.titem = c+4*gfunc.tradew.tScrl-4
-	 itemInfo = gfunc.getItemInfo(gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["item"])
-	 iconImageBuffer[1] = image.load(dir.."itempic/"..loadedItemIcons[gid[gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["item"]]["icon"]]..".pic") 
-	 break
-	 end
-    end
-   else
-    if ev[5] == 0 and gid[gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["item"]]["stackable"] and gfunc.craftw.titemcount < 100 and clicked(ev[3],ev[4],mathFloor(80-gfunc.craftw.cWidth/2)+13, mathFloor(25-gfunc.craftw.cHeight/2)+3,mathFloor(80-gfunc.craftw.cWidth/2)+13, mathFloor(25-gfunc.craftw.cHeight/2)+3) then
-    gfunc.craftw.titemcount = gfunc.craftw.titemcount + 1
-    elseif ev[5] == 0 and gfunc.craftw.titemcount > 1 and clicked(ev[3],ev[4],mathFloor(80-gfunc.craftw.cWidth/2)+16+#tostring(gfunc.craftw.titemcount), mathFloor(25-gfunc.craftw.cHeight/2)+3,mathFloor(80-gfunc.craftw.cWidth/2)+16+#tostring(gfunc.craftw.titemcount), mathFloor(25-gfunc.craftw.cHeight/2)+3) then
-    gfunc.craftw.titemcount = gfunc.craftw.titemcount - 1
-    end
-    if clicked(ev[3],ev[4],mathFloor(80-gfunc.craftw.cWidth/2),mathFloor(25-gfunc.craftw.cHeight/2)+gfunc.craftw.cHeight,mathFloor(80-gfunc.craftw.cWidth/2)+gfunc.craftw.cWidth,mathFloor(25-gfunc.craftw.cHeight/2)+gfunc.craftw.cHeight+3) and cCoins >= gfunc.craftw.titemcount*gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["cost"] then
-	 -- нажатие на кнопку 'создать предмет'
-	 checkVar1 = true
-	 for i = 1, #gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["recipe"] do
-	  if checkItemInBag(gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["recipe"][i][1]) < gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["recipe"][i][2]*gfunc.craftw.titemcount then
-	  checkVar1 = false
-	  end
-	 end
-	if gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["cost"] > cCoins then checkVar1 = false end
-	 if checkVar1 then
-	  for d = 1, #gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["recipe"] do
-	   for i = 1, #inventory["bag"] do
-	    if inventory["bag"][i][1] == gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["recipe"][d][1] then
-	    inventory["bag"][i][2] = inventory["bag"][i][2] - gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["recipe"][d][2]*gfunc.craftw.titemcount
-	    if inventory["bag"][i][2] == 0 then inventory["bag"][i][1] = 0 end
-		break
-		end
-	   end
-	  end
-	 for d = 1, gfunc.craftw.titemcount do
-	  Citem = gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["item"]
-	  cCoins = cCoins - gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["cost"]
-       if Citem ~= nil and 10^10-gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["chance"]*10^10 <= gfunc.random(1,10^10) then
-       if 10^10-(gfunc.craftw.loaded[gfunc.craftw.sect][gfunc.craftw.titem]["achance"] or 0)*10^10 <= gfunc.random(1,10^10) then Citem = createNewItem(Citem) end
-       addItem(Citem,1)
-	   end
-	  Citem = nil
-	  end
-	 gfunc.craftw.titem = 0
-	 gfunc.craftw.titemcount = 1	 
-	 iconImageBuffer = {}
-	 end
-	end
-	if clicked(ev[3],ev[4],mathFloor(80-gfunc.craftw.cWidth/2)+gfunc.craftw.cWidth-2, mathFloor(25-gfunc.craftw.cHeight/2),mathFloor(80-gfunc.craftw.cWidth/2)+gfunc.craftw.cWidth-2, mathFloor(25-gfunc.craftw.cHeight/2)) then
-	gfunc.craftw.titem = 0
-	gfunc.craftw.titemcount = 1
-	iconImageBuffer = {}
-	end
-   -------
-   end
+  gfunc.craftw.action["touch"](ev)
   elseif cWindowTrd == "gfunc.ydw" then
-   for e = 1, #gfunc.ydw do
-    if clicked(ev[3],ev[4],160/2-gfunc.ydw.w/2,50/2-gfunc.ydw.h/2+2+e,160/2-gfunc.ydw.w/2+gfunc.ydw.w-1,50/2-gfunc.ydw.h/2+2+e) then
-    pcall(gfunc.ydw[e].f)
-    end
-   end
+  gfunc.ydw.action["touch"](ev)
   elseif cWindowTrd == "skillsWindow" then
-  if clicked(ev[3],ev[4],gfunc.playerSkills.x+112,gfunc.playerSkills.y,gfunc.playerSkills.x+119,gfunc.playerSkills.y) then cWindowTrd = "pause" end
-   for e = 1, #cPlayerSkills do
-    if ev[5] == 0 and clicked(ev[3],ev[4],gfunc.playerSkills.x+1, gfunc.playerSkills.y+2+e*3-3, gfunc.playerSkills.x+50, gfunc.playerSkills.y+2+e*3) then
-    gfunc.playerSkills.targ = e
-    end
-   end
-   if gfunc.playerSkills.targ > 0 then
-    if ev[5] == 0 and clicked(ev[3],ev[4],gfunc.playerSkills.x+70,gfunc.playerSkills.y+35,gfunc.playerSkills.x+84,gfunc.playerSkills.y+37) and cPlayerSkills[gfunc.playerSkills.targ][3] < #gsd[cPlayerSkills[gfunc.playerSkills.targ][1]]["manacost"] then
-    blbl, checkv1, checkv2 = gsd[cPlayerSkills[gfunc.playerSkills.targ][1]], true, {}
-	 if blbl["reqlvl"] then
-	  if blbl["reqlvl"][cPlayerSkills[gfunc.playerSkills.targ][3]+1] > CGD[1]["lvl"] then 
-	  checkv1 = false 
-	  end	 
-	 end
-	 if blbl["reqcn"] then
-	  if blbl["reqcn"][cPlayerSkills[gfunc.playerSkills.targ][3]+1] > cCoins then 
-	  checkv1 = false 
-	  else
-	  checkv2.c = true
-	  end	 
-	 end
-	 if blbl["reqitem"] then
-	  if checkItemInBag(blbl["reqitem"][cPlayerSkills[gfunc.playerSkills.targ][3]+1][1]) < blbl["reqitem"][cPlayerSkills[gfunc.playerSkills.targ][3]+1][2] then
-	  checkv1 = false 
-	  else
-	  checkv2.o, checkv2.i = checkItemInBag(blbl["reqitem"][cPlayerSkills[gfunc.playerSkills.targ][3]+1][1])
-	  end	 
-	 end
-	 if checkv1 == true then
-	  if checkv2.c then cCoins = cCoins - blbl["reqcn"][cPlayerSkills[gfunc.playerSkills.targ][3]+1] end
-	  if checkv2.i then
-	   for y = 1, #inventory["bag"] do
-	    if inventory["bag"][y][1] == checkv2.i and inventory["bag"][y][2] >= checkv2.o then
-		inventory["bag"][y][2] = inventory["bag"][y][2] - blbl["reqitem"][cPlayerSkills[gfunc.playerSkills.targ][3]+1][2]
-		break
-		end
-	   end
-	  end
-	 cPlayerSkills[gfunc.playerSkills.targ][3] = cPlayerSkills[gfunc.playerSkills.targ][3] + 1
-	 end
-	blbl, checkv1, checkv2 = nil, nil, nil
-	end
-	blbl = false
-    for p = 1, #cUskills do
-	 if ev[5] == 0 and cPlayerSkills[gfunc.playerSkills.targ][1] > 1 and clicked(ev[3],ev[4],gfunc.playerSkills.x+105,gfunc.playerSkills.y+6+4*p-4,gfunc.playerSkills.x+115,gfunc.playerSkills.y+6+4*p-1) and cPlayerSkills[gfunc.playerSkills.targ][3] > 0 then
-	  for n = 1, #cUskills do
-	  if cUskills[n] == cPlayerSkills[gfunc.playerSkills.targ][1] then cUskills[n] = 0 end
-      end
-	 cUskills[p+1] = cPlayerSkills[gfunc.playerSkills.targ][1]
-	 blbl = true
-	 break
-	 end
-	end
-   end
+  gfunc.playerSkills.action["touch"](ev)
   end
  end
  if ev[1] == "scroll" then
   if cWindowTrd == "console" then
-   if clicked(ev[3],ev[4],50,10,109,42) and ev[5] == 1 and cCnsScroll > 1 then
-   cCnsScroll = cCnsScroll - 1
-   elseif clicked(ev[3],ev[4],50,10,109,42) and ev[5] == -1 and mathCeil(cCnsScroll*4) < #consDataR then
-   cCnsScroll = cCnsScroll + 1
-   end
+  gfunc.gameConsole.action["scroll"](ev)
   end
  end
  end
