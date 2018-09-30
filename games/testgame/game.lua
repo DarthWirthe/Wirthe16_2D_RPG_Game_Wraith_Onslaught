@@ -50,7 +50,7 @@ local gfunc = {}
 
 gfunc.usepmx = false
 
-gfunc.version = {1,2,7,5}
+gfunc.version = {1,2,7,6}
 
 local gamefps, cfps, usram = 0, 0
 
@@ -727,6 +727,7 @@ local lostItem
 local function addItem(itemid,num)
 local vparInvEx = 0
 local r = 0
+ -- удалить ошибочные значения
  for f = 1, #CGD[pID]["inventory"]["bag"] do
   if CGD[pID]["inventory"]["bag"][f][2] == 0 then
   CGD[pID]["inventory"]["bag"][f][1] = 0
@@ -734,7 +735,8 @@ local r = 0
   iconImageBuffer[f] = nil
   end
  end
- if not gid[itemid] or not gid[itemid]["stackable"] then
+ -- добавить нестакающийся предмет
+ if gid[itemid] and not gid[itemid]["stackable"] then
   for f = 1, #CGD[pID]["inventory"]["bag"] do
    if CGD[pID]["inventory"]["bag"][f][1] == 0 then 
    vparInvEx = 1
@@ -748,8 +750,10 @@ local r = 0
    end
   end
  end
+ -- добавить стакающийся предмет
  if gid[itemid] and gid[itemid]["stackable"] and vparInvEx == 0 then
   for i = 1, #CGD[pID]["inventory"]["bag"] do
+   -- сгруппировать одинаковые
    if CGD[pID]["inventory"]["bag"][i][1] == itemid then
    CGD[pID]["inventory"]["bag"][i][2] = CGD[pID]["inventory"]["bag"][i][2] + num
    vparInvEx = 1
@@ -1078,8 +1082,7 @@ local v = {
 
 function gfunc.playerRV()
 v = gfunc.setAllValuesInArrayTo(v,0)
-local CritChan
-local buben
+local buben, crit
  for f = 1, #witypes do
   if CGD[pID]["inventory"]["weared"][witypes[f]] ~= 0 and gid[CGD[pID]["inventory"]["weared"][witypes[f]]]["props"]["dds"] then
   buben = gid[CGD[pID]["inventory"]["weared"][witypes[f]]]["props"]["dds"]
@@ -1111,8 +1114,8 @@ local wtp, slvl
   end
  end
  ----
- CritChan = 1+mathFloor((CGD[pID]["strength"]+v["str+"])/10)
- CritChan = CritChan+mathFloor((CGD[pID]["intelligence"]+v["int+"])/10)
+ crit = 1 + mathFloor( (CGD[pID]["strength"]+v["str+"]) / 10)
+ crit = crit + mathFloor( (CGD[pID]["intelligence"]+v["int+"]) / 10)
  v["vPdm1"], v["vPdm2"], v["vMdm1"], v["vMdm2"] = v["vPdm1"]+v["pdm+"], v["vPdm2"]+v["pdm+"], v["vMdm1"]+v["mdm+"], v["vMdm2"]+v["mdm+"]
  if CGD[pID]["inventory"]["weared"]["weapon"] > 0 then
   if gid[CGD[pID]["inventory"]["weared"]["weapon"]]["props"]["phisat"] then
@@ -1143,7 +1146,7 @@ CGD[pID]["mdef"] = mathFloor(30+((CGD[pID]["survivability"]+v["sur+"])/2+(CGD[pI
 CGD[pID]["armormdef"] = v["mdf+"]
 CGD[pID]["cmove"] = true
 CGD[pID]["ctck"] = true
-CGD[pID]["criticalhc"] = v["chc+"] + CritChan
+CGD[pID]["criticalhc"] = v["chc+"] + crit
 vAttackDistance = v.vAtds
 end
 
@@ -1173,6 +1176,7 @@ local xpPlus, limit, i = value or 0, 50, 0
   CGD[pID]["cxp"] = 0
   CGD[pID]["levelpoints"] = CGD[pID]["levelpoints"] + 1
   CGD[pID]["lvl"] = CGD[pID]["lvl"] + 1
+  gfunc.textmsg1("Получен уровень " .. CGD[pID]["lvl"])
   gfunc.playerRV()
   CGD[pID]["chp"] = CGD[pID]["mhp"]
   CGD[pID]["cmp"] = CGD[pID]["mmp"]
@@ -3376,6 +3380,8 @@ CGD[pID]["mx"] = CGD[pID]["x"]
 end
 
 function gfunc.gatheringAction(id)
+pmov = 0
+usepmx = false
  if gud[CGD[id]["id"]]["reqquest"] then
   for m = 1, #cUquests do
    if cUquests[m][1] == gud[CGD[id]["id"]]["reqquest"] and cUquests[m][3] ~= true then
@@ -3904,19 +3910,22 @@ local deltan
 	end
    end
    
-   if CGD[pID]["cint"] ~= nil then
+   if CGD[pID]["cint"] ~= nil and CGD[pID]["cint"][2] ~= 0 then
 	if CGD[pID]["cint"][1] == 1 and gfunc.getDistanceToId(pID,CGD[pID]["cint"][2]) <= CGD[pID]["cint"][3] then
 	gfunc.gatheringAction(CGD[pID]["cint"][2])
 	CGD[pID]["cint"] = nil
-	elseif CGD[pID]["cint"][1] == 2 and gfunc.getDistanceToId(pID,CGD[pID]["cint"][2]) <= CGD[pID]["cint"][3] then
-	 if cPlayerSkills[cUskills[1]] and not pickingUp then
-	  if CGD[CGD[pID]["cint"][2]]["living"] then
-	  gfunc.usepmx = false
-      gfunc.useSkill(CGD[pID]["cint"][4] or 1)
-	  if CGD[pID]["cint"][4] then tableRemove(CGD[pID]["cint"],4) end
+	elseif CGD[pID]["cint"][1] == 2 then
+	 if cPlayerSkills[cUskills[1]] and not pickingUp and CGD[CGD[pID]["cint"][2]]["living"] then
+	  if gfunc.getDistanceToId(pID,CGD[pID]["cint"][2]) <= CGD[pID]["cint"][3] then
+	   pmov = 0
+	   gfunc.usepmx = false
+       gfunc.useSkill(CGD[pID]["cint"][4] or 1)
+	   if CGD[pID]["cint"][4] then tableRemove(CGD[pID]["cint"],4) end
 	  else
-	  CGD[pID]["cint"] = nil
+	  getClose(pID, CGD[pID]["cint"][2], CGD[pID]["cint"][3])
 	  end
+	 else 
+	 CGD[pID]["cint"] = nil
 	 end
 	end
    end
@@ -3946,7 +3955,11 @@ local deltan
    end
 	-- ходьба и её отстойная анимация
    if not pickingUp and not gfunc.pmovlck and pmov ~= 0 and CGD[pID]["cmove"] then
-    CGD[pID]["x"] = CGD[pID]["x"] + pmov
+     if gfunc.usepmx and CGD[pID]["x"] == CGD[pID]["mx"] then
+	 pmov = 0
+	 CGD[pID]["mx"] = math.huge
+	 end
+	CGD[pID]["x"] = CGD[pID]["x"] + pmov
     cGlobalx = cGlobalx + pmov
     cBackgroundPos = cBackgroundPos + pmov
     if gfunc.cim <= 3 then
@@ -3975,7 +3988,7 @@ local deltaD = 0
  while ingame do
   if not stopDrawing then
   --deltaD = os.clock()
-  dmain()  
+  dmain()
   --deltaT = mathFloor((os.clock() - deltaD)*10000)/100
   gamefps = gamefps + 1
   end
@@ -4021,10 +4034,10 @@ local ev, vseffdescrig, pItem, mpcktime, checkVar1, tpskp, formula, Citem, blbl,
 	  vAttackDistance = vAttackDistance or 8
 	  if gfunc.getDistanceToId(pID,cTarget) > gfunc.getPlayerAtdsBySkill(f) then
 	  CGD[pID]["cint"] = {2,cTarget,gfunc.getPlayerAtdsBySkill(f),f}
-	  getClose(pID, cTarget, gfunc.getPlayerAtdsBySkill(f))
 	  else
 	  gfunc.useSkill(f)
 	  CGD[pID]["cint"] = {2,cTarget,gfunc.getPlayerAtdsBySkill(f),f}
+	  gfunc.usepmx = false
 	  pmov = 0
 	  CGD[pID]["mx"] = CGD[pID]["x"]
 	  break
