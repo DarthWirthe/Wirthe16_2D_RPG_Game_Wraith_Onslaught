@@ -13,6 +13,12 @@ local gpu =       component.gpu
 local tableInsert, tableRemove, mathFloor, mathCeil, mathMin, mathMax = table.insert, table.remove, math.floor, math.ceil, math.min, math.max
 local mxw, mxh = gpu.maxResolution()
 
+local parameter = {
+	LootItemImprovedChance = 25,
+	PhysicalDamageReductionMul = 30,
+	MagicalDamageReductionMul = 30,
+	}
+
 local pScreenText = "(C) 2016-2018 Wirthe16"
 local cScreenStat = "Загрузка..."
 local preduprejdenie = ""
@@ -27,7 +33,7 @@ local stopDrawing = false
 local ingame = true
 local cDialog = nil
 local startBckgColour = 0x222222
-local cp = {white = 0xffffff, blue = 0x3392ff, magenta = 0x996dbf, golden = 0xffff00, orange = 0xffb420, green = 0xff9200}
+local cp = {white = 0xffffff, blue = 0x00aaff, magenta = 0x996dbf, golden = 0xffff00, orange = 0xffb420, green = 0xff9200}
 local cGlobalx, cBackgroundPos = 1, 1
 local pSprPicPos = 75
 local cTarget = 0
@@ -48,9 +54,11 @@ buffer.draw(true)
 
 local gfunc = {}
 
+local ache = {}
+
 gfunc.usepmx = false
 
-gfunc.version = {1,2,7,6}
+gfunc.version = {1,2,7,7}
 
 local gamefps, cfps, usram = 0, 0
 
@@ -196,6 +204,9 @@ local world = dofile(dir.."data/levels.data")
 world.current = 1
 for f = 1, #world do
 world[f].draw = load("local buffer=require('G_doubleBuffering');return function() "..world[f].draw.." end")()
+ if not ache[f] then
+ ache[f] = {}
+ end
 end
 
 -- gud = Различные объекты (нпс,порталы,монстры и т.д.) / массив
@@ -231,6 +242,7 @@ if gud[f]["name"] == "" then gud[f]["name"] = "Без названия" end
  end
 os.sleep()
 end
+
 
 -- gid = Различные предметы / массив
 
@@ -435,20 +447,20 @@ end
 local function movetoward(id, x, distanceLimit, step)
  if gfunc.getDistance(id,x) < distanceLimit and x < CGD[id]["x"] then
  CGD[id]["x"] = CGD[id]["x"] - step
- CGD[id]["spos"] = "l"
+ CGD[id]["spos"] = 0
  elseif gfunc.getDistance(id,x) < distanceLimit and x > CGD[id]["x"] then
  CGD[id]["x"] = CGD[id]["x"] + step
- CGD[id]["spos"] = "r"
+ CGD[id]["spos"] = 1
  end
 end
 
 function gfunc.playerAutoMove(x, distanceLimit, step)
 local kx
  if gfunc.getDistance(pID,x) >= step and gfunc.getDistance(pID,x) < distanceLimit and x < CGD[pID]["x"] then
- CGD[pID]["spos"] = "l" 
+ CGD[pID]["spos"] = 0
  pmov = -step
  elseif gfunc.getDistance(pID,x) >= step and gfunc.getDistance(pID,x) < distanceLimit and x > CGD[pID]["x"] then
- CGD[pID]["spos"] = "r"
+ CGD[pID]["spos"] = 1
  pmov = step
  elseif gfunc.getDistance(pID,x) < step then
  pmov = 0
@@ -631,7 +643,7 @@ CGD[new]["x"] = x
 CGD[new]["y"] = y
 CGD[new]["id"] = gud[id]["id"]
 CGD[new]["lvl"] = gud[id]["lvl"]
-CGD[new]["spos"] = "r"
+CGD[new]["spos"] = 1
 CGD[new]["image"] = 0
  if CGD[new]["image"] ~= nil then
  cUSprite = image.load(dir.."sprpic/"..gud[id]["image"]..".pic")
@@ -664,28 +676,28 @@ CGD[new]["effects"] = {}
  pmul, mmul = 1-0.01*(50/math.sqrt(gud[idd]["lvl"])), 1+0.01*(50/math.sqrt(gud[idd]["lvl"]))
  end
  -- физдеф
- if not gud[idd]["pdef"] then 
- gud[idd]["pdef_con"] = mathCeil((gud[idd]["lvl"]*19.84+(gud[idd]["lvl"]^2/1.5))*pmul)
+ if not gud[idd]["pdef"] then
+ gud[idd]["pdef_con"] = mathCeil((gud[idd]["lvl"]*24.84+((gud[idd]["lvl"]-1)^3))*pmul)
  else gud[idd]["pdef_con"] = gud[idd]["pdef"] end
  -- магдеф
- if not gud[idd]["mdef"] then 
- gud[idd]["mdef_con"] = mathCeil((gud[idd]["lvl"]*18.31+(gud[idd]["lvl"]^2/1.5))*mmul) 
+ if not gud[idd]["mdef"] then
+ gud[idd]["mdef_con"] = mathCeil((gud[idd]["lvl"]*23.31+((gud[idd]["lvl"]-1)^3))*mmul)
  else gud[idd]["mdef_con"] = gud[idd]["mdef"] end
  -- физ атака
  if not gud[idd]["ptk"] then gud[idd]["ptk_con"] = {
- mathCeil((1+gud[idd]["lvl"]^1.13)*pmul),
- mathCeil((3+gud[idd]["lvl"]^1.24)*pmul)
+ mathCeil(((1+gud[idd]["lvl"]^1.22)*(1+1/gud[idd]["lvl"]^(1/gud[idd]["lvl"])))*pmul),
+ mathCeil(((3+gud[idd]["lvl"]^1.34)*(1+1/gud[idd]["lvl"]^(1/gud[idd]["lvl"])))*pmul)
  }
  else gud[idd]["ptk_con"] = gud[idd]["ptk"] end
  -- маг атака
  if not gud[idd]["mtk"] then gud[idd]["mtk_con"] = {
- mathCeil((1+gud[idd]["lvl"]^1.23)*mmul),
- mathCeil((3+gud[idd]["lvl"]^1.34)*mmul)
+ mathCeil((1+gud[idd]["lvl"]^1.18)*(1+1/gud[idd]["lvl"]^(1/gud[idd]["lvl"]))*mmul),
+ mathCeil((3+gud[idd]["lvl"]^1.35)*(1+1/gud[idd]["lvl"]^(1/gud[idd]["lvl"]))*mmul)
  }
  else gud[idd]["mtk_con"] = gud[idd]["mtk"] end
  -- макс жс
  if not gud[idd]["mhp"] then
- gud[idd]["mhp_con"] = mathCeil(36+(gud[idd]["lvl"]-1)*36.3+((gud[idd]["lvl"]-1)^2-1)/2)
+ gud[idd]["mhp_con"] = mathCeil(36+(gud[idd]["lvl"]-1)*34.3+(((gud[idd]["lvl"]-1)^2-1)/2)*math.max((gud[idd]["lvl"]-1)/10,1)*(0.85+1/gud[idd]["lvl"]^(1/gud[idd]["lvl"])))
  else
  gud[idd]["mhp_con"] = gud[idd]["mhp"]
  end
@@ -966,11 +978,11 @@ local level = gid[itemID]["lvl"]
    end 
   end
  gid[newItemID]["props"]["dds"] = newDds
- gid[newItemID]["name"] = string.rep("♦",mathMin(#gid[newItemID]["props"]["dds"],5))..gid[newItemID]["name"]
+ gid[newItemID]["name"] = string.rep("♦",mathMin(#newDds,5))..gid[newItemID]["name"]
  gid[newItemID]["cost"] = gid[itemID]["cost"]+mathCeil(gid[itemID]["cost"]/2*mathMin(#gid[newItemID]["props"]["dds"],5))
  gid[newItemID]["oid"] = itemID
  gid[newItemID]["id"] = newItemID
-  if #newDds <= 0 or gid[itemID]["cchg"] then
+  if #newDds == 0 or gid[itemID]["cchg"] then
   gid[newItemID] = nil
   return itemID
   else
@@ -1099,7 +1111,7 @@ local buben, crit
 local wtp, slvl
  for f = 1, #cPlayerSkills do
  slvl = cPlayerSkills[f][3]
-  if gsd[cPlayerSkills[f][1]]["type"] == "passive" and gsd[cPlayerSkills[f][1]]["action"].weaponreq then
+  if gsd[cPlayerSkills[f][1]]["type"] == 2 and gsd[cPlayerSkills[f][1]]["action"].weaponreq then
    for w = 1, #gsd[cPlayerSkills[f][1]]["action"].weaponreq do
     if CGD[pID]["inventory"]["weared"]["weapon"] ~= 0 and gid[CGD[pID]["inventory"]["weared"]["weapon"]]["subtype"] == gsd[cPlayerSkills[f][1]]["action"].weaponreq then
 	wtp = true
@@ -1109,7 +1121,7 @@ local wtp, slvl
   wtp = true
   end
   
-  if slvl > 0 and gsd[cPlayerSkills[f][1]]["type"] == "passive" and v[gsd[cPlayerSkills[f][1]]["action"].etype] ~= nil and wtp then
+  if slvl > 0 and gsd[cPlayerSkills[f][1]]["type"] == 2 and v[gsd[cPlayerSkills[f][1]]["action"].etype] ~= nil and wtp then
   v[gsd[cPlayerSkills[f][1]]["action"].etype] = v[gsd[cPlayerSkills[f][1]]["action"].etype] + gsd[cPlayerSkills[f][1]]["value"][slvl]
   end
  end
@@ -1247,13 +1259,21 @@ local loadNewImage = true
 	end
 end
 
+local function saveAche()
+ache[world.current] = {}
+ for f = 1, #CGD do
+  if f ~= pID and CGD[f]["id"] ~= 43 then
+  tableInsert(ache[world.current],{CGD[f]["id"],gfunc.roundupnum(CGD[f]["x"]),gfunc.roundupnum(CGD[f]["y"]),CGD[f]["resptime"],CGD[f]["spos"]})
+  end
+ end
+end
+
 function gfunc.loadWorld(id,unitList)
 stopDrawing = true
 paused = true
 cWindowTrd = nil
 cTarget = 0
 cDialog = nil
-paused = false
 world.current = id
 dmLoading()
 consoleArray = {"Загрузка уровня id:"..id.." "..world[world.current].name.."..."}
@@ -1265,7 +1285,7 @@ CGD[pID]["cmove"] = true
 CGD[pID]["ctck"] = true
 imageBuffer = {[-4]=image.load(dir.."sprpic/player_a1.pic"),[-3]=image.load(dir.."sprpic/player_s1.pic"),[-2]=image.load(dir.."sprpic/player_s2.pic"),[-1]=image.load(dir.."sprpic/player_pck.pic"),[0]=image.load(dir.."sprpic/player.pic")}
 bufferenv = {}
-local spx, npx = 0, 0
+local spx = 0
 --
 gpu.setForeground(0xAAAAAA)
 term.setCursor(5,39)
@@ -1273,33 +1293,50 @@ io.write(string.rep("─",150))
 term.setCursor(5,41)
 io.write(string.rep("─",150))
 gpu.setForeground(0xCCCCCC)
-local cspawnl = unitList or world[id].spawnList
- for f = 1, #cspawnl do
-  spx = cspawnl[f][2]
-  -- if f > 1 and #cspawnl[f-1] ~= nil and cspawnl[f-1][4] == "p" then
-  -- npx = npx + 45
-  -- spx = npx
-  -- elseif f > 1 and cspawnl[f-1][4] ~= nil and cspawnl[f-1][6] == "p" then
-  -- npx = npx + cspawnl[f-1][4] * cspawnl[f-1][5] - cspawnl[f-1][5]
-  -- spx = npx
-  -- end
-  if gud[cspawnl[f][1]]["nres"] ~= false then
-   if cspawnl[f][4] == nil then
-   gfunc.addUnit(cspawnl[f][1],spx,cspawnl[f][3])
-   CGD[#CGD]["image"] = setImage(cspawnl[f][1])
-   else
-    for i = 1, cspawnl[f][4] do
-    gfunc.addUnit(cspawnl[f][1],spx+i*cspawnl[f][5]-cspawnl[f][5],cspawnl[f][3])
-    CGD[#CGD]["image"] = setImage(cspawnl[f][1])
-    end 
-   end
-  os.sleep()
-  end
- term.setCursor(5,40) 
-  for n = 1,mathFloor(f*150/#cspawnl) do
+
+ local function lbar(f,n)
+ term.setCursor(5,40)
+  for n = 1,mathFloor(f*150/n) do
   io.write("█")
   end
  end
+
+local cspawnl = unitList or world[id].spawnList
+ if not ache[id] or #ache[id] == 0 then
+  for f = 1, #cspawnl do
+  spx = cspawnl[f][2]
+   if gud[cspawnl[f][1]]["nres"] ~= false then
+    if cspawnl[f][4] == nil then
+    gfunc.addUnit(cspawnl[f][1],spx,cspawnl[f][3])
+    CGD[#CGD]["image"] = setImage(cspawnl[f][1])
+    else
+     for i = 1, cspawnl[f][4] do
+     gfunc.addUnit(cspawnl[f][1],spx+i*cspawnl[f][5]-cspawnl[f][5],cspawnl[f][3])
+     CGD[#CGD]["image"] = setImage(cspawnl[f][1])
+     end
+    end
+   os.sleep()
+   end
+  lbar(f,#cspawnl)
+  end
+ else
+  for f = 1, #ache[id] do
+   if gud[ache[id][f][1]]["nres"] ~= false then
+   gfunc.addUnit(ache[id][f][1],ache[id][f][2],ache[id][f][3])
+    if ache[id][f][4] > 0 then
+    CGD[#CGD]["living"] = false
+    CGD[#CGD]["resptime"] = ache[id][f][4]
+    end
+	if ache[id][f][5] then
+	CGD[#CGD]["spos"] = ache[id][f][5]
+	end
+   CGD[#CGD]["image"] = setImage(ache[id][f][1])
+   os.sleep()
+  end
+  lbar(f,#ache[id])
+  end
+ end
+saveAche()
 paused = false
 stopDrawing = false
 gfunc.textmsg2(world[id].name)
@@ -1307,6 +1344,7 @@ end
 
 function gfunc.teleport(x,tworld)
  if tworld and tworld ~= world[world.current] then
+ saveAche()
  gfunc.loadWorld(tworld)
  end
 cGlobalx, cBackgroundPos, CGD[pID]["x"], CGD[pID]["mx"] = x or 1, x or 1, x or 1, x or 1
@@ -1318,6 +1356,7 @@ function gfunc.saveGame(savePath,filename)
  if not fs.exists(savePath) then
  fs.makeDirectory(savePath)
  end
+saveAche()
 local gd = {}
 local qwertyn = 0
  for f = 1, 600 do
@@ -1339,11 +1378,7 @@ gd = {}
   end
  end
 f:write(ser.serialize(gd),"\n") -- выполненные/заблокированные задания
-gd = {["u"]={},["t"]={}}
- for i = 2, #CGD do
- gd["u"][i-1] = {CGD[i]["id"],CGD[i]["x"],CGD[i]["y"]}
- gd["t"][i-1] = CGD[i]["resptime"]
- end
+gd = ache
 f:write(ser.serialize(gd),"\n") -- чек побитых монстров
 gd = {}
  for i = 1, #gud do
@@ -1399,21 +1434,12 @@ local tkt, tbl, yv = 0
   for f = 1, #yv do
   gud[yv[f]]["nres"] = false
   end
+ for f = 1, #world do ache[f] = {} end
  yv = ser.unserialize(tbl[9])
- gfunc.loadWorld(world.current,yv["u"] or world[world.current].spawnList)
- 
-  for f = 2, #yv["u"] do
-   if CGD[f] then
-    if yv["t"][f-1] > 0 then
-	CGD[f]["resptime"] = yv["t"][f-1]
-	CGD[f]["living"] = false
-	else
-	CGD[f]["resptime"] = 0
-	CGD[f]["living"] = true
-	end
-   end
+  for n = 1, #yv do
+  ache[n] = yv[n]
   end
-
+ gfunc.loadWorld(world.current)
  gfunc.teleport(buben)
  yv = nil
  tbl = nil
@@ -1467,9 +1493,9 @@ local ccl, cx, cy, dx, dy, btname, vpercentr, halfWidth, subtextninfo
  cx, cy = mathFloor(CGD[f]["x"]), mathFloor(CGD[f]["y"])
  dx,dy = cx+75-cGlobalx, 49-cy-CGD[f]["height"] 
   if CGD[f]["living"] and gfunc.getDistanceToId(pID,f) <= 95 then
-   if CGD[f]["image"] ~= nil and CGD[f]["spos"] == "r" then
+   if CGD[f]["image"] ~= nil and CGD[f]["spos"] == 1 then
    buffer.image(dx,dy, imageBuffer[CGD[f]["image"]],true)
-   elseif CGD[f]["image"] ~= nil and CGD[f]["spos"] == "l" then
+   elseif CGD[f]["image"] ~= nil and CGD[f]["spos"] == 0 then
    buffer.image(dx,dy, image.flipHorizontal(image.duplicate(imageBuffer[CGD[f]["image"]])),true)
    else buffer.text(dx,dy,0xcc2222,"ERROR")
    end
@@ -1952,7 +1978,7 @@ local spisok1 = {
 function gfunc.getItemInfo(id)
 local info = {}
 local function giiwcAdd(t,c) tableInsert(info,{tostring(t),c}) end
-local itemtype, itemsubtype = gid[id]["type"], gid[id]["subtype"] 
+local itemtype, itemsubtype = gid[id]["type"], gid[id]["subtype"]
 giiwcAdd(gid[id]["name"], gid[id]["ncolor"])
  if itemtype == "armors" or itemtype == "weapon" then
  giiwcAdd(awSutypeList[itemsubtype], 0xBCBCBC)
@@ -2649,9 +2675,10 @@ gfunc.ydw = {
 		local xpdec = mathFloor(CGD[pID]["mxp"]*gfunc.random(2*(10/math.sqrt(CGD[pID]["lvl"]))*100,5*(10/math.sqrt(CGD[pID]["lvl"]))*100)*0.0001)
 		 for f=1,#CGD[pID]["inventory"]["bag"] do
 		  if gfunc.random(0,100) <= 1 then
-		  CGD[pID]["inventory"]["bag"][f][2] = 0
+		  CGD[pID]["inventory"]["bag"][f][2] = CGD[pID]["inventory"]["bag"][f][2] - 1
 		  end
 		 end
+		CGD[pID]["cint"] = nil
 		gfunc.loadWorld(world[world.current].drespawn)
 		gfunc.teleport(world[world.current].drx)
 		gfunc.playerRV()
@@ -2676,7 +2703,7 @@ local x, y = 160/2-gfunc.ydw.w/2, 50/2-gfunc.ydw.h/2
 buffer.square(x, y, gfunc.ydw.w, gfunc.ydw.h, 0x7B7B7B, nil, nil, 25)
 buffer.square(x-1, y+1, 1, gfunc.ydw.h-2, 0x7B7B7B, nil, nil, 25)
 buffer.square(x+gfunc.ydw.w, y+1, 1, gfunc.ydw.h-2, 0x7B7B7B, nil, nil, 25)
-local ydwTitle = "Персонаж помер"
+local ydwTitle = "Слишком низкое здоровье"
 buffer.text(x+gfunc.ydw.w/2-unicode.len(ydwTitle)/2,y+1,0xFCFCFC,ydwTitle)
  for f = 1, #gfunc.ydw do
  buffer.text(x+gfunc.ydw.w/2-unicode.len(gfunc.ydw[f][1])/2,y+2+f,0xCCCCCC,gfunc.ydw[f][1])
@@ -2929,9 +2956,9 @@ local c
 end
 
 local stypes = {
-["attack"] = "Атака",
-["buff"] = "Бафф",
-["passive"] = "Пассивный",
+[1] = "Атака",
+[2] = "Пассивный",
+[3] = "Бафф",
 }
 
 gfunc.playerSkills = {x=20,y=5,w=120,h=40,targ=0,action={}}
@@ -2955,7 +2982,7 @@ buffer.square(x+53, y+2, 50, 37, 0x919191)
  if gfunc.playerSkills.targ ~= 0 then
  local slvl = mathMax(cPlayerSkills[gfunc.playerSkills.targ][3],1)
  blbl = gsd[cPlayerSkills[gfunc.playerSkills.targ][1]] 
-  if ( blbl["type"] == "passive" and cPlayerSkills[gfunc.playerSkills.targ][3] < 7 ) or cPlayerSkills[gfunc.playerSkills.targ][3] < #blbl["manacost"] then
+  if ( blbl["type"] == 2 and cPlayerSkills[gfunc.playerSkills.targ][3] < 7 ) or cPlayerSkills[gfunc.playerSkills.targ][3] < #blbl["manacost"] then
    buffer.square(x+55, y+30, 46, 8, 0xA3A3A3)
    local buben = {
    {"Улучшение умения • следующий уровень "..cPlayerSkills[gfunc.playerSkills.targ][3]+1,0xEFEFEF}
@@ -3004,14 +3031,14 @@ buffer.square(x+53, y+2, 50, 37, 0x919191)
  gfunc.pSkillsPbar(x+55,y+25,slvl)
  buffer.text(x+54,y+3,0xffffff,"•"..blbl["name"])
  buffer.text(x+54,y+4,0xffffff,"Тип: "..stypes[blbl["type"]])
-  if slvl > 0 and ( blbl["type"] == "attack" or blbl["type"] == "buff" ) then
+  if slvl > 0 and ( blbl["type"] == 1 or blbl["type"] == 3 ) then
   buffer.text(x+54,y+5,0xffffff,"Уровень умения: "..slvl.." / "..#blbl["manacost"])
   buffer.text(x+54,y+6,0xffffff,"Использует маны: "..blbl["manacost"][slvl].." ед.")
   buffer.text(x+54,y+7,0xffffff,"Перезарядка: "..blbl["reloading"].." сек.")
-   if blbl["type"] == "attack" then
+   if blbl["type"] == 1 then
    buffer.text(x+54,y+8,0xffffff,"Дальность: "..(blbl["distance"]+(vAttackDistance or 8)))
    end
-  elseif slvl > 0 and blbl["type"] == "passive" then
+  elseif slvl > 0 and blbl["type"] == 2 then
   buffer.text(x+54,y+5,0xffffff,"Уровень умения: "..slvl.." / "..#blbl["value"])
   else
   buffer.text(x+54,y+5,0xCCCCCC,"Умение ещё не изучено")
@@ -3036,7 +3063,10 @@ buffer.square(x+53, y+2, 50, 37, 0x919191)
   for p = 1, #gfunc.skillsTopPanel.t do
   slvl = gfunc.skillsTopPanel.t[p].c
    for n = 1, #cUskills do
-   if cPlayerSkills[gfunc.playerSkills.targ][1] == cUskills[p+1] then slvl = 0xBBBBBB; break end
+    if cPlayerSkills[gfunc.playerSkills.targ][1] == cUskills[p+1] then
+	slvl = 0xBBBBBB
+	break
+	end
    end
   buffer.square(x+105, 6+y+4*p-4, 10, 3, slvl)
   buffer.text(x+109,6+y+4*p-3,0xffffff,tostring(p+1))
@@ -3052,11 +3082,11 @@ gfunc.playerSkills.action["touch"] = function(ev)
     end
    end
    if gfunc.playerSkills.targ > 0 then
-    if ev[5] == 0 and clicked(ev[3],ev[4],gfunc.playerSkills.x+70,gfunc.playerSkills.y+35,gfunc.playerSkills.x+84,gfunc.playerSkills.y+37) and ( ( gsd[cPlayerSkills[gfunc.playerSkills.targ][1]]["type"] == "passive" and cPlayerSkills[gfunc.playerSkills.targ][3] < 7 ) or cPlayerSkills[gfunc.playerSkills.targ][3] < #gsd[cPlayerSkills[gfunc.playerSkills.targ][1]]["manacost"] ) then
+    if ev[5] == 0 and clicked(ev[3],ev[4],gfunc.playerSkills.x+70,gfunc.playerSkills.y+35,gfunc.playerSkills.x+84,gfunc.playerSkills.y+37) and ( ( gsd[cPlayerSkills[gfunc.playerSkills.targ][1]]["type"] == 2 and cPlayerSkills[gfunc.playerSkills.targ][3] < 7 ) or cPlayerSkills[gfunc.playerSkills.targ][3] < #gsd[cPlayerSkills[gfunc.playerSkills.targ][1]]["manacost"] ) then
     blbl, checkv1, checkv2 = gsd[cPlayerSkills[gfunc.playerSkills.targ][1]], true, {}
 	 if blbl["reqlvl"] then
 	  if blbl["reqlvl"][cPlayerSkills[gfunc.playerSkills.targ][3]+1] > CGD[pID]["lvl"] then 
-	  checkv1 = false 
+	  checkv1 = false
 	  end	 
 	 end
 	 if blbl["reqcn"] then
@@ -3089,7 +3119,7 @@ gfunc.playerSkills.action["touch"] = function(ev)
 	end
 	blbl = false
     for p = 1, #cUskills do
-	 if ev[5] == 0 and cPlayerSkills[gfunc.playerSkills.targ][1] > 1 and clicked(ev[3],ev[4],gfunc.playerSkills.x+105,gfunc.playerSkills.y+6+4*p-4,gfunc.playerSkills.x+115,gfunc.playerSkills.y+6+4*p-1) and cPlayerSkills[gfunc.playerSkills.targ][3] > 0 and gsd[cPlayerSkills[gfunc.playerSkills.targ][1]]["type"] ~= "passive" then
+	 if ev[5] == 0 and cPlayerSkills[gfunc.playerSkills.targ][1] > 1 and clicked(ev[3],ev[4],gfunc.playerSkills.x+105,gfunc.playerSkills.y+6+4*p-4,gfunc.playerSkills.x+115,gfunc.playerSkills.y+6+4*p-1) and cPlayerSkills[gfunc.playerSkills.targ][3] > 0 and gsd[cPlayerSkills[gfunc.playerSkills.targ][1]]["type"] ~= 2 then
 	  for n = 1, #cUskills do
 	  if cUskills[n] == cPlayerSkills[gfunc.playerSkills.targ][1] then cUskills[n] = 0 end
       end
@@ -3171,7 +3201,7 @@ local nitemloop = gud[CGD[fromID]["id"]]["tcdrop"] or 1 -- количество 
  for l = 1, nitemloop do
   for f = 1, #itemLoot do
    if itemLoot[f][1] ~= nil and gfunc.random(1,10^5) <= itemLoot[f][2]*10^3 then
-    if gfunc.random(1,100) >= 25 then itemLoot[f][1] = createNewItem(itemLoot[f][1]) end
+   if gfunc.random(1,100) >= parameter.LootItemImprovedChance then itemLoot[f][1] = createNewItem(itemLoot[f][1]) end
    addItem(itemLoot[f][1],1)
    gfunc.console.debug('Получен предмет "'..gid[itemLoot[f][1]]["name"]..'"')
    gfunc.textmsg1('Получен предмет "'..gid[itemLoot[f][1]]["name"]..'"')
@@ -3190,12 +3220,10 @@ if gfunc.random(1,100) <= CGD[pID]["criticalhc"] then chchance = 2; damage = dam
  if CGD[id]["chp"] > damage then
  CGD[id]["attPlayer"] = true
  CGD[id]["chp"] = CGD[id]["chp"] - damage
- gfunc.console.debug(unicode.sub(gud[CGD[id]["id"]]["name"],1,15),"получил урон",damage)
  -- упал
  elseif CGD[id]["chp"] <= damage then
  CGD[id]["effects"] = {}
  CGD[id]["attPlayer"] = false
- gfunc.console.debug(unicode.sub(gud[CGD[id]["id"]]["name"],1,15),"получил урон",damage)
  CGD[id]["chp"] = 0
  CGD[id]["living"] = false
  CGD[id]["resptime"] = gud[CGD[id]["id"]]["vresp"]
@@ -3252,19 +3280,19 @@ if gfunc.random(1,100) <= CGD[pID]["criticalhc"] then chchance = 2; damage = dam
  end
  if damage > 0 then 
   if chchance == 1 then
-  inserttunitinfo(id,"Урон "..mathCeil(damage)) 
+  inserttunitinfo(id,"Урон "..mathCeil(damage))
+  gfunc.console.debug(unicode.sub(gud[CGD[id]["id"]]["name"],1,15),"получил урон",damage)
   elseif chchance == 2 then
   inserttunitinfo(id,"Критический урон "..mathCeil(damage))
   end
  end
-bce.bColorEffect(1,85,38)
 end
 
 function gfunc.playerGetDamage(fromID,tipedm,dmplus)
  if CGD[fromID]["x"] > CGD[pID]["x"] then
- CGD[fromID]["spos"] = "l"
+ CGD[fromID]["spos"] = 0
  else
- CGD[fromID]["spos"] = "r"
+ CGD[fromID]["spos"] = 1
  end
  -- атака прерывает выкапывание чего-то там
  if pickingUp then
@@ -3276,10 +3304,14 @@ function gfunc.playerGetDamage(fromID,tipedm,dmplus)
  CGD[pID]["image"] = 0
  end
  --
-local atck, dmgRedu = gfunc.random(CGD[fromID]["ptk"][1]*10,CGD[fromID]["ptk"][2]*10)/10, CGD[pID]["pdef"]/(CGD[pID]["pdef"]+CGD[fromID]["lvl"]*30)
+
+local atck, dmgRedu
  if tipedm == "m" then
  atck = gfunc.random(CGD[fromID]["mtk"][1]*10,CGD[fromID]["mtk"][2]*10)/10
- dmgRedu = CGD[pID]["mdef"]/(CGD[pID]["mdef"]+CGD[fromID]["lvl"]*30)
+ dmgRedu = CGD[pID]["mdef"]/(CGD[pID]["mdef"]+CGD[fromID]["lvl"]*parameter.MagicalDamageReductionMul)
+ else
+ atck = gfunc.random(CGD[fromID]["ptk"][1]*10,CGD[fromID]["ptk"][2]*10)/10
+ dmgRedu = CGD[pID]["pdef"]/(CGD[pID]["pdef"]+CGD[fromID]["lvl"]*parameter.PhysicalDamageReductionMul)
  end
 local damage = mathMax(mathFloor(mathMax((atck+dmplus)*(1-dmgRedu),0)),1)
 if cTarget == 0 then cTarget = fromID end
@@ -3297,14 +3329,14 @@ end
 function gfunc.enemySkill(enemy,sl,lvl)
  if eusd[sl]["type"] == 1 and CGD[enemy]["living"] and gfunc.getDistanceToId(pID,enemy) <= 60 and CGD[enemy]["attPlayer"] == true and CGD[enemy]["ctck"] then
   -- attack skill
-  local dist = gud[CGD[enemy]["id"]]["atds"]+eusd[sl]["distance"]
+  local dist = gud[CGD[enemy]["id"]]["atds"] + eusd[sl]["distance"]
   if gfunc.getDistanceToId(pID,enemy) > dist then
    if CGD[enemy]["x"] > CGD[pID]["x"] then
-   CGD[enemy]["spos"] = "l"
-   CGD[enemy]["mx"] = CGD[pID]["x"]+CGD[pID]["width"]+dist
+   CGD[enemy]["spos"] = 0
+   CGD[enemy]["mx"] = CGD[pID]["x"] + CGD[pID]["width"] + dist
    else
-   CGD[enemy]["spos"] = "r"
-   CGD[enemy]["mx"] = CGD[pID]["x"]-dist
+   CGD[enemy]["spos"] = 1
+   CGD[enemy]["mx"] = CGD[pID]["x"] - dist
    end
   else
   CGD[enemy]["mx"] = CGD[enemy]["x"]
@@ -3315,7 +3347,7 @@ function gfunc.enemySkill(enemy,sl,lvl)
   end
  elseif eusd[sl]["type"] == 2 and CGD[enemy]["living"] and CGD[enemy]["attPlayer"] == true then
   -- buff skill
-  gfunc.addUnitEffect(enemy,eusd[sl]["eff"][1],eusd[sl]["eff"][2])
+  gfunc.addUnitEffect(enemy, eusd[sl]["eff"][1], eusd[sl]["eff"][2])
  end
 end
 
@@ -3323,11 +3355,16 @@ function gfunc.useSkill(skill)
 local cskill = cPlayerSkills[cUskills[skill]][1]
 local lvl = cPlayerSkills[cUskills[skill]][3]
 local damage = 0
- if gsd[cskill]["type"] == "attack" and CGD[cTarget]["rtype"] ~= "p" and CGD[cTarget]["rtype"] ~= "f" and CGD[cTarget]["rtype"] ~= "r" and CGD[cTarget]["rtype"] ~= "c" then
-  if CGD[cTarget]["x"] > CGD[pID]["x"] then
-  CGD[pID]["spos"] = "r"
+local sTarget = nil
+ if CGD[pID]["cint"] then
+ sTarget = CGD[pID]["cint"][2]
+ end
+ sTarget = sTarget or cTarget or 0
+ if sTarget ~= 0 and CGD[sTarget]["living"] and gsd[cskill]["type"] == 1 and CGD[sTarget]["rtype"] ~= "p" and CGD[sTarget]["rtype"] ~= "f" and CGD[sTarget]["rtype"] ~= "r" and CGD[sTarget]["rtype"] ~= "c" then
+  if CGD[sTarget]["x"] > CGD[pID]["x"] then
+  CGD[pID]["spos"] = 1
   else
-  CGD[pID]["spos"] = "l"
+  CGD[pID]["spos"] = 0
   end
  local weaponDmg
    if gsd[cskill]["typedm"] == "p" then
@@ -3336,32 +3373,32 @@ local damage = 0
    elseif gsd[cskill]["typedm"] == "m" then
    damage = damage + gfunc.random(CGD[pID]["mtk"][1]*10,CGD[pID]["mtk"][2]*10)/10
    weaponDmg = gfunc.random(vaddsPnts.vMdm1,vaddsPnts.vMdm2)
-   end  
+   end
    if type(gsd[cskill]["basedmgmlt"]) == "table" then damage = damage + damage*gsd[cskill]["basedmgmlt"][lvl]*0.01 
    elseif type(gsd[cskill]["basedmgmlt"]) == "number" then damage = damage + damage*gsd[cskill]["basedmgmlt"]*0.01 
-   end  
+   end
    if gsd[cskill]["weapondmgmlt"] and CGD[pID]["inventory"]["weared"]["weapon"] > 0 then damage = damage + weaponDmg*gsd[cskill]["weapondmgmlt"][lvl]*0.01 end
    if gsd[cskill]["bseatckinc"] then damage = damage + damage*gsd[cskill]["bseatckinc"][lvl]*0.01 end
    if gsd[cskill]["value"] then damage = damage + gsd[cskill]["value"][lvl] end
   if gsd[cskill]["typedm"] == "p" then
-  damage = mathMax(damage*(1-CGD[cTarget]["pdef"]/(CGD[cTarget]["pdef"]+CGD[pID]["lvl"]*30)),0.1)
+  damage = mathMax(damage*(1-CGD[sTarget]["pdef"]/(CGD[sTarget]["pdef"]+CGD[pID]["lvl"]*30)),0.1)
   elseif gsd[cskill]["typedm"] == "m" then
-  damage = mathMax(damage*(1-CGD[cTarget]["mdef"]/(CGD[cTarget]["mdef"]+CGD[pID]["lvl"]*30)),0.1)
+  damage = mathMax(damage*(1-CGD[sTarget]["mdef"]/(CGD[sTarget]["mdef"]+CGD[pID]["lvl"]*30)),0.1)
   end
-  if CGD[pID]["cmp"] >= gsd[cskill]["manacost"][lvl] and cPlayerSkills[cUskills[skill]][2] == 0 and gfunc.getDistanceToId(pID,cTarget) <= vAttackDistance+gsd[cskill]["distance"] then
+  if CGD[pID]["cmp"] >= gsd[cskill]["manacost"][lvl] and cPlayerSkills[cUskills[skill]][2] == 0 and gfunc.getDistanceToId(pID,sTarget) <= vAttackDistance+gsd[cskill]["distance"] then
   CGD[pID]["cmp"] = CGD[pID]["cmp"] - gsd[cskill]["manacost"][lvl]
   damage = mathMax(damage,1)
-  gfunc.makeDamage(cTarget, mathFloor(damage))
+  gfunc.makeDamage(sTarget, mathFloor(damage))
   cPlayerSkills[cUskills[1]][2] = gsd[1]["reloading"]*10
   CGD[pID]["image"] = -4
   pimg4t = 0
-  if cTarget ~= 0 and gsd[cskill]["eff"] ~= nil then gfunc.addUnitEffect(cTarget,gsd[cskill]["eff"],cPlayerSkills[cUskills[skill]][3]) end
+  if sTarget ~= 0 and gsd[cskill]["eff"] ~= nil then gfunc.addUnitEffect(sTarget,gsd[cskill]["eff"],cPlayerSkills[cUskills[skill]][3]) end
   cPlayerSkills[cUskills[skill]][2] = gsd[cskill]["reloading"]*10
   vtskillUsingMsg = 3
   skillUsingMsg[1] = gsd[cskill]["name"]
   end
  CGD[pID]["rage"] = 10
- elseif gsd[cskill]["type"] == "buff" and CGD[pID]["cmp"] >= gsd[cskill]["manacost"][lvl] and cPlayerSkills[cUskills[skill]][2] == 0 then
+ elseif gsd[cskill]["type"] == 3 and CGD[pID]["cmp"] >= gsd[cskill]["manacost"][lvl] and cPlayerSkills[cUskills[skill]][2] == 0 then
  CGD[pID]["cmp"] = CGD[pID]["cmp"] - gsd[cskill]["manacost"][lvl]
  cPlayerSkills[cUskills[skill]][2] = gsd[cskill]["reloading"]*10
  if gsd[cskill]["eff"] ~= nil then gfunc.addUnitEffect(pID,gsd[cskill]["eff"],lvl) end
@@ -3482,7 +3519,7 @@ local function dmain()
   buffer.square(1,1,160,50,0x000000)
   end
  -- player
-	if CGD[pID]["spos"] == "r" then 
+	if CGD[pID]["spos"] == 1 then 
 	buffer.image(pSprPicPos, 48-CGD[pID]["height"], imageBuffer[CGD[pID]["image"]],true)
 	--buffer.image(pSprPicPos+7,40,gfunc.weaponImg["sword"])
 	else 
@@ -3643,7 +3680,6 @@ gfunc.playerRV()
 gfunc.maxXP()
 CGD[pID]["chp"] = CGD[pID]["mhp"]
 CGD[pID]["cmp"] = CGD[pID]["mmp"]
-dmain()
 
 local uMoveRef = 1
 local healthReg, manaReg
@@ -3705,7 +3741,16 @@ local deltan = 0
 	CGD[pID]["chp"] = CGD[pID]["mhp"]
 	end
    end
-
+   for f = 1, #ache do
+    if f ~= world.current and ache[f] then
+     for n = 1, #ache[f] do
+	  if ache[f][n][4] > 0 then
+	  ache[f][n][4] = ache[f][n][4] - 1
+	  end
+	 end
+	end
+   end
+   
    for f = 2, #CGD do
     -- произвольное восстановление жс на 5%/сек.
 	if not CGD[f]["attPlayer"] and CGD[f]["living"] then
@@ -3728,7 +3773,7 @@ local deltan = 0
 	CGD[f]["mx"] = CGD[f]["sx"] + gfunc.random(-8, 8)
 	end
     -- моб подходит и бьёт игрока
-	 if CGD[f]["rtype"] == "e" then
+	 if CGD[f]["rtype"] == "e" and CGD[f]["attPlayer"] then
 	  if gud[CGD[f]["id"]]["skill"] then
 	  qwert = {gud[CGD[f]["id"]]["skill"][#gud[CGD[f]["id"]]["skill"]][1],gud[CGD[f]["id"]]["skill"][#gud[CGD[f]["id"]]["skill"]][2]}
 	   for o = 1, #gud[CGD[f]["id"]]["skill"] do
@@ -3748,7 +3793,7 @@ local deltan = 0
 	CGD[f]["mx"] = CGD[f]["sx"]
 	end
     -- агр мобов
-	if CGD[f]["living"] and gud[CGD[f]["id"]]["agr"] == true and gfunc.getDistanceToId(pID,f) <= gud[CGD[f]["id"]]["atds"]*2 then
+	if CGD[f]["living"] and gud[CGD[f]["id"]]["agr"] == true and gfunc.getDistanceToId(pID,f) <= 25 then
     CGD[f]["attPlayer"] = true
     end
 	-- самотаргет
@@ -4012,7 +4057,7 @@ local ev, vseffdescrig, pItem, mpcktime, checkVar1, tpskp, formula, Citem, blbl,
    gfunc.usepmx = true  
    else
    pmov = 3
-   CGD[pID]["spos"] = "r"
+   CGD[pID]["spos"] = 1
    gfunc.keyactionmove = true
    end
   elseif (ev[4] == 203 or ev[4] == 30) and not paused and CGD[pID]["x"] >= world[world.current].limitL and CGD[pID]["cmove"] and CGD[pID]["cmove"] then -- влево
@@ -4023,14 +4068,14 @@ local ev, vseffdescrig, pItem, mpcktime, checkVar1, tpskp, formula, Citem, blbl,
    gfunc.usepmx = true
    else
    pmov = -3
-   CGD[pID]["spos"] = "l"
+   CGD[pID]["spos"] = 0
    gfunc.keyactionmove = true
    end
   end
   if not paused and ev[4] >= 2 and ev[4] <= 7 then
    for f = 1, 6 do
 	if ev[4] == f + 1 and cTarget ~= 0 and cUskills[f] > 0 and cPlayerSkills[cUskills[f]] and cPlayerSkills[cUskills[f]][3] > 0 and not pickingUp then
-	 if gsd[cPlayerSkills[cUskills[f]][1]]["type"] == "attack" then
+	 if gsd[cPlayerSkills[cUskills[f]][1]]["type"] == 1 then
 	  vAttackDistance = vAttackDistance or 8
 	  if gfunc.getDistanceToId(pID,cTarget) > gfunc.getPlayerAtdsBySkill(f) then
 	  CGD[pID]["cint"] = {2,cTarget,gfunc.getPlayerAtdsBySkill(f),f}
@@ -4042,7 +4087,7 @@ local ev, vseffdescrig, pItem, mpcktime, checkVar1, tpskp, formula, Citem, blbl,
 	  CGD[pID]["mx"] = CGD[pID]["x"]
 	  break
 	  end
-	 elseif gsd[cPlayerSkills[cUskills[f]][1]]["type"] == "buff" then
+	 elseif gsd[cPlayerSkills[cUskills[f]][1]]["type"] == 3 then
 	 gfunc.useSkill(f)
 	 CGD[pID]["cint"] = nil
 	 pmov = 0
