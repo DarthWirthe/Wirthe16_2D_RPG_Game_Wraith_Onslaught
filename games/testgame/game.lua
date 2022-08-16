@@ -1,14 +1,14 @@
 local term =		require("term")
 local event =		require("event")
 --local shell =		require("shell")
-local image =		require("E_image")
+local image =		require("G_image")
 local thread = 		require("G_thread")
 local unicode =		require("unicode")
 local computer =	require("computer")
 local keyboard =  	require("keyboard")
 local fs = 			require("filesystem")
 local ser = 		require("serialization")
-local buffer = 		require("E_doubleBuffering")
+local buffer = 		require("G_doubleBuffering")
 local component =	require("component")
 local gpu = 		component.gpu
 local tableInsert, tableRemove, mathFloor, mathCeil, mathMin, mathMax = table.insert, table.remove, math.floor, math.ceil, math.min, math.max
@@ -510,7 +510,7 @@ function game._function.initResources()
 	world.current = 1
 
 	for f = 1, #world do
-		world[f].draw = load("local buffer=require('E_doubleBuffering');return function() "..world[f].draw.." end")()
+		world[f].draw = load("local buffer=require('G_doubleBuffering');return function() "..world[f].draw.." end")()
 		if not savedUnits[f] then
 			savedUnits[f] = {}
 		end
