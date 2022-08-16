@@ -1,9 +1,9 @@
 return {
-"E_ocif.lua",
-"E_advancedLua.lua",
-"E_colorlib.lua",
-"E_image.lua",
-"E_doubleBuffering.lua",
+"G_ocif.lua",
+"G_advancedLua.lua",
+"G_colorlib.lua",
+"G_image.lua",
+"G_doubleBuffering.lua",
 "data/dialogs.data",
 "data/elements.data",
 "data/levels.data",
@@ -262,7 +262,4 @@ return {
 "sprpic/c_ghost.pic"
 },
 {
-"G_colorlib.lua",
-"G_image.lua",
-"G_doubleBuffering.lua",
 }
