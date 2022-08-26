@@ -18,7 +18,7 @@ local mxw, mxh = gpu.maxResolution()
 local game = {
 	_function = {},							-- Все функции
 	_config = {								-- Неизменяемые настройки
-		debugMode = true,
+		debugMode = false,
 		unitDrawingDistance = 85,
 		startWeapon = {[1]=7, [2]=124},
 		reservedItemId = 200,
@@ -4000,7 +4000,7 @@ game._gui.playerSkills.action["touch"] = function(ev)
 	if game._gui.playerSkills.targ > 0 then
 		slvl = game._player.skills[game._gui.playerSkills.targ][3]
 		targetSkill = gsd[game._player.skills[game._gui.playerSkills.targ][1]]
-		if ev[5] == 0 and clicked(ev[3],ev[4],x+70,game._gui.playerSkills.window.y+35,x+84,y+37) and (targetSkill["type"] == 2 and slvl < game._config.maxSkillLevel) or (targetSkill["type"] ~= 2 and slvl < #targetSkill["manacost"]) then
+		if ev[5] == 0 and clicked(ev[3],ev[4],x+70,game._gui.playerSkills.window.y+35,x+84,y+37) and ((targetSkill["type"] == 2 and slvl < game._config.maxSkillLevel) or (targetSkill["type"] ~= 2 and slvl < #targetSkill["manacost"])) then
 			
 			checkv1, checkv2 = true, {}
 			if targetSkill["reqlvl"] then
