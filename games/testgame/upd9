@@ -1,0 +1,13 @@
+return {
+"data/dialogs.data",
+"data/elements.data",
+"data/levels.data",
+"data/itempic.data",
+"data/crafting.data",
+"data/trading.data",
+"game.lua",
+},
+{
+"data/manufacturing.data",
+"data/trade.data",
+}
