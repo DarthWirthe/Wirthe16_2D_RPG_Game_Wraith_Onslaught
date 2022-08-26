@@ -5379,7 +5379,8 @@ end
 
 -- Кнопки в главном меню
 game._gui.mainMenu.action["touch"] = function(ev)
-	local x, y, stat, err
+	local x, y
+	local stat, err = true
 	if game._gui.mainMenu.mode == 0 then
 		for f = 1, #mainMenulist do
 			if ev[5] == 0 and clicked(ev[3],ev[4],game._gui.mainMenu.x,game._gui.mainMenu.y+f*4-3,game._gui.mainMenu.x+game._gui.mainMenu.w-1,game._gui.mainMenu.y+f*4+2) then
